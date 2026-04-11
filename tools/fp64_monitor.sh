@@ -17,6 +17,7 @@
 #   --use-rocmsmi         Enable rocm-smi memory monitoring
 #   --preload             Wrap main function to prevent possible shutdown race condition
 #   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
+#   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
 #   --no-analyze          Disable auto-analysis after run
 #   --verbose             Enable verbose output
 #   --help                Show this help message
@@ -30,6 +31,7 @@
 #   FP64_MONITOR_TMPDIR        - Fast local storage for temp output
 #   FP64_MONITOR_USE_ROCMSMI   - Set to 1 to enable rocm-smi memory monitoring
 #   FP64_MONITOR_PRELOAD       - Set to 1 to enable LD_PRELOAD wrapper
+#   FP64_MONITOR_QUIET         - Set to 1 to suppress rocprofiler SYS_PERFMON warnings
 #   FP64_MONITOR_ANALYZE       - Set to 0 to disable auto-analysis (default: 1)
 #   FP64_MONITOR_VERBOSE       - Set to 1 for verbose output
 #
@@ -51,6 +53,7 @@ Options:
   --use-rocmsmi         Enable rocm-smi memory monitoring
   --preload             Wrap main function to prevent possible shutdown race condition
   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
+  --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
   --no-analyze          Disable auto-analysis after run
   --verbose             Enable verbose output
   --help                Show this help message
@@ -103,6 +106,10 @@ while [[ $# -gt 0 ]]; do
         --counters)
             export FP64_MONITOR_COUNTERS="$2"
             shift 2
+            ;;
+        --quiet)
+            export FP64_MONITOR_QUIET=1
+            shift
             ;;
         --no-analyze)
             export FP64_MONITOR_ANALYZE=0
@@ -201,6 +208,12 @@ fi
 # Set GPU from ROCR_VISIBLE_DEVICES
 if [[ -v ROCR_VISIBLE_DEVICES ]] ; then
     export FP64_MONITOR_GPU=${ROCR_VISIBLE_DEVICES}
+fi
+
+# Suppress rocprofiler-sdk SYS_PERFMON warnings if --quiet is set
+# GLOG_minloglevel: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
+if [ "${FP64_MONITOR_QUIET}" = "1" ]; then
+    export GLOG_minloglevel=2
 fi
 
 # Run the application

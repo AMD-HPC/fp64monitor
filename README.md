@@ -87,6 +87,7 @@ mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
 | `--use-rocmsmi` | Enable rocm-smi memory monitoring |
 | `--preload` | Wrap main function to prevent possible shutdown race condition |
 | `--counters TYPE` | Counter set: fp64 (default), fp32, fp16, or int |
+| `--quiet` | Suppress rocprofiler-sdk SYS_PERFMON warnings |
 | `--no-analyze` | Disable auto-analysis after run |
 | `--verbose` | Enable verbose output |
 | `--help` | Show help message |
@@ -112,6 +113,7 @@ ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
 | `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, or int |
 | `FP64_MONITOR_USE_ROCMSMI` | 0 | Enable rocm-smi memory monitoring (1=enabled) |
 | `FP64_MONITOR_PRELOAD` | 0 | Enable LD_PRELOAD wrapper for clean shutdown (1=enabled) |
+| `FP64_MONITOR_QUIET` | 0 | Suppress rocprofiler-sdk SYS_PERFMON warnings (1=enabled) |
 | `FP64_MONITOR_ANALYZE` | 1 | Auto-analyze results after run (0=disabled) |
 | `FP64_MONITOR_VERBOSE` | 0 | Verbose output (1=enabled) |
 
