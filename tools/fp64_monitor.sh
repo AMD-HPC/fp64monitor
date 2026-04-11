@@ -230,6 +230,7 @@ MPI_RANK=$(get_mpi_rank)
 ANALYZE="${FP64_MONITOR_ANALYZE:-1}"
 if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; then
     # Wait for other ranks to finish writing their files
+    echo "Waiting for all ranks to exit..."
     sleep 5
     
     # Find the analyze script
