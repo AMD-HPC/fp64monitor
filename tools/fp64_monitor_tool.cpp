@@ -39,6 +39,7 @@
 #include <climits>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <future>
 #include <iomanip>
@@ -249,21 +250,70 @@ std::string expand_filename_pattern(const std::string& pattern) {
     return result;
 }
 
-// Copy a file from src to dst
+// Copy a file from src to dst with verification
 // Returns true on success, false on failure
 bool copy_file(const std::string& src, const std::string& dst) {
-    std::ifstream in(src, std::ios::binary);
+    // Open source file and get size
+    std::ifstream in(src, std::ios::binary | std::ios::ate);
     if (!in) {
         return false;
     }
     
-    std::ofstream out(dst, std::ios::binary);
+    std::streamsize src_size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    
+    if (src_size < 0) {
+        return false;
+    }
+    
+    // Open destination file
+    std::ofstream out(dst, std::ios::binary | std::ios::trunc);
     if (!out) {
         return false;
     }
     
-    out << in.rdbuf();
-    return out.good();
+    // Copy in chunks to handle large files and detect write errors
+    const size_t buffer_size = 64 * 1024;  // 64KB chunks
+    std::vector<char> buffer(buffer_size);
+    std::streamsize total_written = 0;
+    
+    while (in && out && total_written < src_size) {
+        in.read(buffer.data(), buffer_size);
+        std::streamsize bytes_read = in.gcount();
+        
+        if (bytes_read > 0) {
+            out.write(buffer.data(), bytes_read);
+            if (!out) {
+                // Write failed (disk full, etc.)
+                return false;
+            }
+            total_written += bytes_read;
+        }
+    }
+    
+    // Flush to ensure data is written to disk
+    out.flush();
+    
+    if (!out.good()) {
+        return false;
+    }
+    
+    // Close files
+    out.close();
+    in.close();
+    
+    // Verify destination file size matches source
+    struct stat src_stat, dst_stat;
+    if (stat(src.c_str(), &src_stat) != 0 || stat(dst.c_str(), &dst_stat) != 0) {
+        return false;
+    }
+    
+    if (src_stat.st_size != dst_stat.st_size) {
+        // Size mismatch - copy failed
+        return false;
+    }
+    
+    return true;
 }
 
 // Generate default output filename
@@ -785,11 +835,16 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     }
     
     // Open output file if specified
-    // Retry a few times in case of race condition with directory creation
+    // Retry only for transient errors (ENOENT when dir being created)
+    // Fail immediately for permanent errors (EACCES, ENOSPC, etc.)
     if (!file_to_open.empty()) {
         const int max_retries = 5;
-        for (int retry = 0; retry < max_retries; ++retry) {
+        bool should_retry = true;
+        
+        for (int retry = 0; retry < max_retries && should_retry; ++retry) {
+            errno = 0;
             g_state.output_file = std::make_unique<std::ofstream>(file_to_open);
+            
             if (g_state.output_file->is_open()) {
                 g_state.output = g_state.output_file.get();
                 if (g_state.config.verbose && is_rank0) {
@@ -797,14 +852,47 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
                 }
                 break;
             }
-            // Wait a bit and retry (directory might be being created by another rank)
-            if (retry < max_retries - 1) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // Check errno to decide if we should retry
+            int open_errno = errno;
+            switch (open_errno) {
+                case ENOENT:  // Directory doesn't exist yet (being created by another rank)
+                case EAGAIN:  // Resource temporarily unavailable
+#if EWOULDBLOCK != EAGAIN
+                case EWOULDBLOCK:
+#endif
+                    // Transient errors - retry after delay
+                    if (retry < max_retries - 1) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    break;
+                    
+                case EACCES:  // Permission denied
+                case EROFS:   // Read-only filesystem
+                case ENOSPC:  // No space left on device
+                case EDQUOT:  // Disk quota exceeded
+                case ELOOP:   // Too many symbolic links
+                case ENAMETOOLONG:  // Filename too long
+                    // Permanent errors - don't retry
+                    should_retry = false;
+                    if (g_state.config.verbose && is_rank0) {
+                        std::cerr << "[FP64 Monitor] File open failed (errno=" << open_errno 
+                                  << "): " << strerror(open_errno) << "\n";
+                    }
+                    break;
+                    
+                default:
+                    // Unknown error - retry once then give up
+                    if (retry >= 1) {
+                        should_retry = false;
+                    } else if (retry < max_retries - 1) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    break;
             }
         }
         
         if (!g_state.output_file || !g_state.output_file->is_open()) {
-            // Always warn about file open failure
             std::cerr << "[FP64 Monitor] Warning: Could not open " << file_to_open 
                       << ", using stdout\n";
             g_state.output = &std::cout;
