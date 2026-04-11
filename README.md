@@ -338,7 +338,7 @@ Features:
 
 ### Python Dependencies
 
-Install required packages:
+Install required packages (for plot\_timeseries.py):
 
 ```bash
 pip install -r requirements.txt
