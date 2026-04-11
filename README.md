@@ -309,16 +309,30 @@ Features:
 Generates time-series visualizations of the instruction mix over time.
 
 ```bash
-# Generate PDF charts
+# Generate PDF charts (default: FP64 counter set)
 python3 plot_timeseries.py fp64_monitor_output/fp64_monitor_*.csv
 
 # Generate interactive HTML charts (requires plotly)
 python3 plot_timeseries.py --html fp64_monitor_output/fp64_monitor_*.csv
+
+# Use a specific counter set (fp64, fp32, or int)
+python3 plot_timeseries.py --counters int fp64_monitor_output/fp64_monitor_*.csv
+
+# Auto-detect counter set based on input data
+python3 plot_timeseries.py --counters auto fp64_monitor_output/fp64_monitor_*.csv
 ```
 
+Options:
+| Option | Description |
+|--------|-------------|
+| `--output PREFIX` | Output file prefix (default: derived from input) |
+| `--html` | Generate interactive HTML instead of PDF |
+| `--counters SET` | Counter set: fp64 (default), fp32, int, or auto |
+
 Features:
-- Raw instruction counts with FP64 breakdown (stacked area chart)
-- FP64 percentage of VALU over time
+- Supports FP64, FP32, and INT counter sets (default: FP64)
+- Raw instruction counts with breakdown (stacked area chart)
+- Percentage of VALU over time
 - Variability bands showing rank imbalance (when multiple CSV files provided)
 - Interactive HTML output with zoom/hover (requires plotly)
 
