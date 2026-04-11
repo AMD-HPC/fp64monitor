@@ -34,7 +34,9 @@
 #include <rocprofiler-sdk/rocprofiler.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <climits>
 #include <condition_variable>
 #include <cstdlib>
 #include <fstream>
@@ -54,6 +56,31 @@ namespace {
 
 using namespace measure_flops;
 
+// Safe string-to-long conversion with validation
+// Returns default_val if the string is null, empty, or not a valid integer
+// Also returns default_val if the value is out of the specified range
+long safe_strtol(const char* str, long default_val, long min_val = LONG_MIN, long max_val = LONG_MAX) {
+    if (str == nullptr || str[0] == '\0') {
+        return default_val;
+    }
+    
+    char* endptr = nullptr;
+    errno = 0;
+    long val = std::strtol(str, &endptr, 10);
+    
+    // Check for conversion errors
+    if (errno == ERANGE || endptr == str || *endptr != '\0') {
+        return default_val;
+    }
+    
+    // Check range
+    if (val < min_val || val > max_val) {
+        return default_val;
+    }
+    
+    return val;
+}
+
 // Try to detect MPI rank from common environment variables
 // Returns -1 if not found
 int get_mpi_rank() {
@@ -72,37 +99,104 @@ int get_mpi_rank() {
     
     for (const char** var = rank_vars; *var != nullptr; ++var) {
         if (const char* val = std::getenv(*var)) {
-            return std::atoi(val);
+            long rank = safe_strtol(val, -1, 0, INT_MAX);
+            return static_cast<int>(rank);
         }
     }
     return -1;
 }
 
-// Get hostname
+// Sanitize a string to be safe for use as a path component
+// Removes or replaces characters that could cause path traversal
+std::string sanitize_path_component(const std::string& input) {
+    std::string result;
+    result.reserve(input.size());
+    
+    for (size_t i = 0; i < input.size(); ++i) {
+        char c = input[i];
+        
+        // Skip path separators
+        if (c == '/' || c == '\\') {
+            result += '_';
+            continue;
+        }
+        
+        // Skip .. sequences (path traversal)
+        if (c == '.' && i + 1 < input.size() && input[i + 1] == '.') {
+            result += '_';
+            ++i;  // Skip next dot too
+            continue;
+        }
+        
+        // Skip null bytes
+        if (c == '\0') {
+            continue;
+        }
+        
+        result += c;
+    }
+    
+    // Don't allow empty result
+    if (result.empty()) {
+        return "unknown";
+    }
+    
+    return result;
+}
+
+// Get hostname (sanitized for safe use in filenames)
 std::string get_hostname() {
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
         hostname[sizeof(hostname) - 1] = '\0';
-        return std::string(hostname);
+        return sanitize_path_component(std::string(hostname));
     }
     return "unknown";
 }
 
+// Recursively create directories (like mkdir -p)
+// Returns true on success, false on failure
+// Thread-safe: uses mkdir with EEXIST handling
+bool mkdir_recursive(const std::string& path) {
+    if (path.empty()) {
+        return false;
+    }
+    
+    // Check if it already exists
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0) {
+        return S_ISDIR(st.st_mode);
+    }
+    
+    // Find the parent directory
+    size_t last_slash = path.rfind('/');
+    if (last_slash != std::string::npos && last_slash > 0) {
+        std::string parent = path.substr(0, last_slash);
+        if (!mkdir_recursive(parent)) {
+            return false;
+        }
+    }
+    
+    // Create this directory
+    // mkdir is atomic on POSIX, EEXIST means another process created it
+    if (mkdir(path.c_str(), 0755) != 0 && errno != EEXIST) {
+        return false;
+    }
+    
+    return true;
+}
+
 // Get output directory name from environment or use default
-// Creates the directory if it doesn't exist
+// Creates the directory (recursively) if it doesn't exist
 // All ranks attempt creation (mkdir with EEXIST is safe for concurrent calls)
 std::string get_output_directory() {
     const char* dir_env = std::getenv("FP64_MONITOR_DIR");
     std::string dir_name = dir_env ? dir_env : "fp64_monitor_output";
     
-    // All ranks try to create the directory - this is safe because:
-    // 1. mkdir() is atomic on POSIX systems
-    // 2. We handle EEXIST to allow concurrent creation attempts
+    // Try to create the directory recursively
     struct stat st;
     if (stat(dir_name.c_str(), &st) != 0) {
-        // Directory doesn't exist, try to create it
-        if (mkdir(dir_name.c_str(), 0755) != 0 && errno != EEXIST) {
-            // Failed to create, fall back to current directory
+        if (!mkdir_recursive(dir_name)) {
             std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
                     << dir_name << ", using current directory\n";
             return "";
@@ -622,19 +716,21 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     std::string output_format = "csv";  // Default to CSV for easier post-processing
     
     if (const char* interval = std::getenv("FP64_MONITOR_INTERVAL")) {
-        sampling_interval_ms = std::atoi(interval);
+        // Validate: 1ms to 1 hour (3600000ms)
+        sampling_interval_ms = static_cast<int>(safe_strtol(interval, 1000, 1, 3600000));
     }
     if (const char* gpu = std::getenv("FP64_MONITOR_GPU")) {
-        gpu_id = std::atoi(gpu);
+        // Validate: 0 to 255 (reasonable GPU count limit)
+        gpu_id = static_cast<int>(safe_strtol(gpu, 0, 0, 255));
     }
     if (const char* verbose = std::getenv("FP64_MONITOR_VERBOSE")) {
-        g_state.config.verbose = (std::atoi(verbose) != 0);
+        g_state.config.verbose = (safe_strtol(verbose, 0, 0, 1) != 0);
     }
     if (const char* format = std::getenv("FP64_MONITOR_FORMAT")) {
         output_format = format;
     }
     if (const char* usesmi = std::getenv("FP64_MONITOR_USE_ROCMSMI")) {
-        g_state.config.use_rocm_smi = (std::atoi(usesmi) != 0);
+        g_state.config.use_rocm_smi = (safe_strtol(usesmi, 0, 0, 1) != 0);
     }
     if (const char* tmpdir = std::getenv("FP64_MONITOR_TMPDIR")) {
         g_state.config.tmpdir = tmpdir;
@@ -878,16 +974,13 @@ void tool_fini_impl() {
     
     // Copy temp file to final destination if using tmpdir
     if (file_valid && !g_state.temp_filepath.empty() && !g_state.final_filepath.empty()) {
-        // Ensure the final directory exists
+        // Ensure the final directory exists (create recursively if needed)
         size_t last_slash = g_state.final_filepath.rfind('/');
         if (last_slash != std::string::npos) {
             std::string final_dir = g_state.final_filepath.substr(0, last_slash);
-            struct stat st;
-            if (stat(final_dir.c_str(), &st) != 0) {
-                if (mkdir(final_dir.c_str(), 0755) != 0 && errno != EEXIST) {
-                    std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
-                              << final_dir << " for final output\n";
-                }
+            if (!mkdir_recursive(final_dir)) {
+                std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
+                          << final_dir << " for final output\n";
             }
         }
         
@@ -964,7 +1057,7 @@ rocprofiler_configure(uint32_t                 version,
     // Check verbose setting early (before tool_init)
     bool verbose = false;
     if (const char* v = std::getenv("FP64_MONITOR_VERBOSE")) {
-        verbose = (std::atoi(v) != 0);
+        verbose = (safe_strtol(v, 0, 0, 1) != 0);
     }
     
     // Only print version info if verbose and rank 0 (or non-MPI)
