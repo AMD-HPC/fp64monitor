@@ -1,0 +1,11 @@
+# Python dependencies for fp64_monitor analysis tools
+#
+# Install with: pip install -r requirements.txt
+#
+# Note: Python 3.8+ is required
+
+# For PDF chart generation (plot_timeseries.py)
+matplotlib>=3.5.0
+
+# For interactive HTML chart generation (plot_timeseries.py --html)
+plotly>=5.0.0
