@@ -59,9 +59,40 @@ make -j$(nproc)
 
 ## Usage
 
-### Tool Library (Recommended)
+### Wrapper Script (Recommended)
 
-Monitor any HIP application by preloading the tool library:
+The easiest way to use fp64_monitor is with the wrapper script:
+
+```bash
+# Basic usage
+fp64_monitor.sh -- ./your_hip_app [args...]
+
+# With options
+fp64_monitor.sh --interval 500 --verbose -- ./your_app arg1 arg2
+
+# MPI applications
+mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
+```
+
+#### Wrapper Script Options
+
+| Option | Description |
+|--------|-------------|
+| `--interval MS` | Sampling interval in ms (default: 1000) |
+| `--output PATTERN` | Output file pattern (default: auto) |
+| `--format FORMAT` | Output format: csv, json, text (default: csv) |
+| `--dir DIR` | Output directory (default: fp64_monitor_output) |
+| `--gpu ID` | GPU ID to monitor (default: 0) |
+| `--tmpdir DIR` | Fast local storage for temp output (e.g., /dev/shm) |
+| `--use-rocmsmi` | Enable rocm-smi memory monitoring |
+| `--counters TYPE` | Counter set: fp64 (default), fp32, fp16, or int |
+| `--no-analyze` | Disable auto-analysis after run |
+| `--verbose` | Enable verbose output |
+| `--help` | Show help message |
+
+### Tool Library (Direct)
+
+Monitor any HIP application by setting the tool library directly:
 
 ```bash
 ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
@@ -71,13 +102,18 @@ ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FP64_MONITOR_INTERVAL` | 100 | Sampling interval in milliseconds |
+| `FP64_MONITOR_INTERVAL` | 1000 | Sampling interval in milliseconds |
 | `FP64_MONITOR_GPU` | 0 | GPU ID to monitor |
-| `FP64_MONITOR_OUTPUT` | auto | Output file (see below) |
+| `FP64_MONITOR_OUTPUT` | auto | Output file pattern (see below) |
 | `FP64_MONITOR_FORMAT` | csv | Output format: text, csv, json |
+| `FP64_MONITOR_DIR` | fp64_monitor_output | Output directory |
+| `FP64_MONITOR_TMPDIR` | (none) | Fast local storage for temp files (e.g., /dev/shm) |
+| `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, or int |
+| `FP64_MONITOR_USE_ROCMSMI` | 0 | Enable rocm-smi memory monitoring (1=enabled) |
+| `FP64_MONITOR_ANALYZE` | 1 | Auto-analyze results after run (0=disabled) |
 | `FP64_MONITOR_VERBOSE` | 0 | Verbose output (1=enabled) |
 
-**Recommended interval**: Use intervals of 50-100ms for applications running less than a few seconds. For longer-running applications, 100-500ms is appropriate. The tool takes a final sample at exit to capture any remaining activity, but this may fail for very short applications.
+**Recommended interval**: Use intervals of 50-100ms for applications running less than a few seconds. For longer-running applications, 500-1000ms is appropriate. The tool takes a final sample at exit to capture any remaining activity.
 
 ### Output File Naming
 
@@ -190,9 +226,11 @@ sample_id,elapsed_seconds,gpu_id,total_instructions,valu_instructions,...,fp64_v
 }
 ```
 
-## Counters Collected
+## Counter Sets
 
-The tool collects these FP64-related counters:
+The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64_MONITOR_COUNTERS`:
+
+### FP64 Counters (default)
 
 | Counter | Description |
 |---------|-------------|
@@ -205,7 +243,91 @@ The tool collects these FP64-related counters:
 | `SQ_INSTS_VALU_MFMA_F64` | FP64 Matrix FMA |
 | `SQ_INSTS_MFMA` | Total MFMA instructions |
 
-**Note**: Counter values are per-wavefront (64 threads), not per-thread.
+### FP32 Counters (`--counters fp32`)
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_VALU` | Total VALU instructions |
+| `SQ_INSTS_MFMA` | Total MFMA instructions |
+| `SQ_INSTS_VALU_ADD_F32` | FP32 ADD/SUB |
+| `SQ_INSTS_VALU_MUL_F32` | FP32 Multiply |
+| `SQ_INSTS_VALU_FMA_F32` | FP32 FMA |
+| `SQ_INSTS_VALU_TRANS_F32` | FP32 Transcendental |
+| `SQ_INSTS_VALU_MFMA_F32` | FP32 Matrix FMA |
+
+### FP16 Counters (`--counters fp16`)
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_VALU` | Total VALU instructions |
+| `SQ_INSTS_MFMA` | Total MFMA instructions |
+| `SQ_INSTS_VALU_ADD_F16` | FP16 ADD/SUB |
+| `SQ_INSTS_VALU_MUL_F16` | FP16 Multiply |
+| `SQ_INSTS_VALU_FMA_F16` | FP16 FMA |
+| `SQ_INSTS_VALU_MFMA_F16` | FP16 Matrix FMA |
+| `SQ_INSTS_VALU_MFMA_BF16` | BF16 Matrix FMA |
+
+### Integer + VMEM Counters (`--counters int`)
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_VALU` | Total VALU instructions |
+| `SQ_INSTS_VALU_INT32` | 32-bit integer VALU |
+| `SQ_INSTS_VALU_INT64` | 64-bit integer VALU |
+| `SQ_INSTS_VMEM_RD` | Vector memory reads |
+| `SQ_INSTS_VMEM_WR` | Vector memory writes |
+| `SQ_INST_CYCLES_VMEM_RD` | VMEM read issue cycles |
+| `SQ_INST_CYCLES_VMEM_WR` | VMEM write issue cycles |
+
+**Note**: Counter values are per-wavefront (64 threads), not per-thread. Hardware limits restrict simultaneous counter collection to ~8 SQ-block counters, which is why different counter sets exist.
+
+## Analysis Tools
+
+### analyze_results.py
+
+Aggregates CSV output files and generates a summary report. Automatically run by the wrapper script after the application exits (disable with `--no-analyze`).
+
+```bash
+# Manual usage
+python3 analyze_results.py fp64_monitor_output/fp64_monitor_*.csv
+```
+
+Features:
+- Aggregates data across multiple MPI ranks
+- Reports total instruction counts and FP64 percentages
+- VMEM read/write statistics and issue latencies (when using `--counters int`)
+
+### plot_timeseries.py
+
+Generates time-series visualizations of the instruction mix over time.
+
+```bash
+# Generate PDF charts
+python3 plot_timeseries.py fp64_monitor_output/fp64_monitor_*.csv
+
+# Generate interactive HTML charts (requires plotly)
+python3 plot_timeseries.py --html fp64_monitor_output/fp64_monitor_*.csv
+```
+
+Features:
+- Raw instruction counts with FP64 breakdown (stacked area chart)
+- FP64 percentage of VALU over time
+- Variability bands showing rank imbalance (when multiple CSV files provided)
+- Interactive HTML output with zoom/hover (requires plotly)
+
+### Python Dependencies
+
+Install required packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+Required: `matplotlib>=3.5.0` (for PDF output)
+Optional: `plotly>=5.0.0` (for HTML output)
 
 ## Test Programs
 
@@ -333,9 +455,10 @@ measure_flops/
 ├── CMakeLists.txt                    # Main build configuration
 ├── README.md                         # This file
 ├── IMPLEMENTATION_PLAN.md            # Detailed design document
+├── requirements.txt                  # Python dependencies for analysis scripts
 │
 ├── include/measure_flops/
-│   ├── types.hpp                     # Core data structures
+│   ├── types.hpp                     # Core data structures and counter sets
 │   ├── counter_sampler.hpp           # Hardware counter sampling
 │   ├── instruction_analyzer.hpp      # FP64 analysis
 │   ├── output_formatter.hpp          # Output formatting
@@ -350,13 +473,23 @@ measure_flops/
 │   └── memory_monitor.cpp            # Memory monitoring implementation
 │
 ├── tools/
-│   └── fp64_monitor_tool.cpp         # ROCP_TOOL_LIBRARIES tool library
+│   ├── fp64_monitor.sh               # Wrapper script (recommended entry point)
+│   ├── fp64_monitor_tool.cpp         # ROCP_TOOL_LIBRARIES tool library
+│   └── preload.cpp                   # LD_PRELOAD helper for rocm-smi shutdown
+│
+├── scripts/
+│   └── build.sh                      # Build helper script
 │
 └── tests/
     ├── CMakeLists.txt                # Test build configuration
     ├── README.md                     # Test documentation
+    ├── analyze_results.py            # Post-processing analysis script
+    ├── plot_timeseries.py            # Time-series visualization (PDF/HTML)
     ├── stream_triad_fp64.hip         # FP64 validation workload
     ├── test_instruction_analyzer.cpp # Unit tests
+    ├── test_mfma_direct.cpp          # MFMA instruction test
+    ├── test_rocblas_gemm.cpp         # rocBLAS GEMM test
+    ├── validate_counters.sh          # Counter validation script
     └── run_integration_tests.sh      # Integration test suite
 ```
 
