@@ -6,6 +6,13 @@ Generates charts showing instruction mix over time:
   1. Raw instruction counts per sample period
   2. Percentage of VALU per sample period
 
+Supports multiple counter sets (default: fp64):
+  - FP64: fp64_add, fp64_mul, fp64_fma, fp64_trans, fp64_mfma
+  - FP32: fp32_add, fp32_mul, fp32_fma, fp32_trans, fp32_mfma
+  - INT:  int32_total, int64_total, vmem_rd, vmem_wr
+
+Use --counters auto to auto-detect based on input data.
+
 When multiple CSV files are provided (e.g., from MPI ranks), the data is
 aggregated (summed) across all files for each sample period.
 
@@ -22,6 +29,8 @@ Usage:
     python3 plot_timeseries.py <csv_files...> [--output prefix] [--html]
     python3 plot_timeseries.py fp64_monitor_*.csv --output my_analysis
     python3 plot_timeseries.py fp64_monitor_*.csv --html
+    python3 plot_timeseries.py fp64_monitor_*.csv --counters int  # Use INT counters
+    python3 plot_timeseries.py fp64_monitor_*.csv -c auto         # Auto-detect
 """
 
 import sys
@@ -46,6 +55,29 @@ except ImportError:
     HAS_PLOTLY = False
 
 
+# Counter set definitions
+COUNTER_SETS = {
+    'fp64': {
+        'name': 'FP64',
+        'columns': ['fp64_add', 'fp64_mul', 'fp64_fma', 'fp64_trans', 'fp64_mfma'],
+        'labels': ['FP64 ADD', 'FP64 MUL', 'FP64 FMA', 'FP64 Trans', 'FP64 MFMA'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+    },
+    'fp32': {
+        'name': 'FP32',
+        'columns': ['fp32_add', 'fp32_mul', 'fp32_fma', 'fp32_trans', 'fp32_mfma'],
+        'labels': ['FP32 ADD', 'FP32 MUL', 'FP32 FMA', 'FP32 Trans', 'FP32 MFMA'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+    },
+    'int': {
+        'name': 'Integer + VMEM',
+        'columns': ['int32_total', 'int64_total', 'vmem_rd', 'vmem_wr'],
+        'labels': ['INT32', 'INT64', 'VMEM Read', 'VMEM Write'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'],
+    },
+}
+
+
 def load_csv(filename):
     """Load CSV data from fp64_monitor output file."""
     samples = []
@@ -65,10 +97,47 @@ def load_csv(filename):
     return list(reader)
 
 
-def compute_deltas(rows):
+def detect_counter_set(rows):
+    """Detect which counter set has non-zero data."""
+    if not rows:
+        return 'fp64'  # Default
+    
+    # Sum values across all rows to detect which set has data
+    totals = {}
+    for set_name, set_info in COUNTER_SETS.items():
+        total = 0
+        for row in rows:
+            for col in set_info['columns']:
+                total += float(row.get(col, 0))
+        totals[set_name] = total
+    
+    # Return the set with the most data
+    best_set = max(totals, key=totals.get)
+    if totals[best_set] > 0:
+        return best_set
+    return 'fp64'  # Default if all zeros
+
+
+def get_counter_set(csv_files, specified_set):
+    """Get the counter set to use, with fp64 as default."""
+    if specified_set == 'auto':
+        rows = load_csv(csv_files[0])
+        detected = detect_counter_set(rows)
+        print(f"Auto-detected counter set: {detected}")
+        return detected
+    elif specified_set is not None:
+        return specified_set
+    else:
+        return 'fp64'  # Default
+
+
+def compute_deltas(rows, counter_set='fp64'):
     """Compute per-period deltas from cumulative counter values."""
     if not rows:
         return []
+    
+    set_info = COUNTER_SETS[counter_set]
+    columns = set_info['columns']
     
     deltas = []
     prev = None
@@ -79,12 +148,10 @@ def compute_deltas(rows):
             'elapsed_seconds': float(row.get('elapsed_seconds', 0)),
             'total_instructions': float(row.get('total_instructions', 0)),
             'valu_instructions': float(row.get('valu_instructions', 0)),
-            'fp64_add': float(row.get('fp64_add', 0)),
-            'fp64_mul': float(row.get('fp64_mul', 0)),
-            'fp64_fma': float(row.get('fp64_fma', 0)),
-            'fp64_trans': float(row.get('fp64_trans', 0)),
-            'fp64_mfma': float(row.get('fp64_mfma', 0)),
         }
+        # Add counter-set specific columns
+        for col in columns:
+            current[col] = float(row.get(col, 0))
         
         if prev is None:
             # First sample - use raw values
@@ -96,12 +163,9 @@ def compute_deltas(rows):
                 'elapsed_seconds': current['elapsed_seconds'],
                 'total_instructions': current['total_instructions'] - prev['total_instructions'],
                 'valu_instructions': current['valu_instructions'] - prev['valu_instructions'],
-                'fp64_add': current['fp64_add'] - prev['fp64_add'],
-                'fp64_mul': current['fp64_mul'] - prev['fp64_mul'],
-                'fp64_fma': current['fp64_fma'] - prev['fp64_fma'],
-                'fp64_trans': current['fp64_trans'] - prev['fp64_trans'],
-                'fp64_mfma': current['fp64_mfma'] - prev['fp64_mfma'],
             }
+            for col in columns:
+                delta[col] = current[col] - prev[col]
         
         deltas.append(delta)
         prev = current
@@ -109,17 +173,20 @@ def compute_deltas(rows):
     return deltas
 
 
-def load_and_aggregate(csv_files):
+def load_and_aggregate(csv_files, counter_set='fp64'):
     """Load data from multiple CSV files and aggregate by sample period.
     
     Returns aggregated data with min/max for variability bands.
     """
+    set_info = COUNTER_SETS[counter_set]
+    columns = set_info['columns']
+    
     # Load deltas from each file
     all_deltas = []
     for csv_file in csv_files:
         rows = load_csv(csv_file)
         if rows:
-            deltas = compute_deltas(rows)
+            deltas = compute_deltas(rows, counter_set)
             all_deltas.append(deltas)
     
     if not all_deltas:
@@ -142,12 +209,9 @@ def load_and_aggregate(csv_files):
             'elapsed_seconds': 0,
             'total_instructions': 0,
             'valu_instructions': 0,
-            'fp64_add': 0,
-            'fp64_mul': 0,
-            'fp64_fma': 0,
-            'fp64_trans': 0,
-            'fp64_mfma': 0,
         }
+        for col in columns:
+            agg[col] = 0
         
         count = 0
         for deltas in all_deltas:
@@ -155,11 +219,8 @@ def load_and_aggregate(csv_files):
                 d = deltas[i]
                 agg['total_instructions'] += d['total_instructions']
                 agg['valu_instructions'] += d['valu_instructions']
-                agg['fp64_add'] += d['fp64_add']
-                agg['fp64_mul'] += d['fp64_mul']
-                agg['fp64_fma'] += d['fp64_fma']
-                agg['fp64_trans'] += d['fp64_trans']
-                agg['fp64_mfma'] += d['fp64_mfma']
+                for col in columns:
+                    agg[col] += d[col]
                 agg['elapsed_seconds'] = max(agg['elapsed_seconds'], d['elapsed_seconds'])
                 rank_total_insts.append(d['total_instructions'])
                 rank_valu_insts.append(d['valu_instructions'])
@@ -167,7 +228,6 @@ def load_and_aggregate(csv_files):
         
         if count > 0:
             # Store min/max across ranks (scaled to total by multiplying by num_ranks)
-            # This gives the range if all ranks had the min or max value
             agg['total_insts_min'] = min(rank_total_insts) * num_ranks if rank_total_insts else 0
             agg['total_insts_max'] = max(rank_total_insts) * num_ranks if rank_total_insts else 0
             agg['valu_insts_min'] = min(rank_valu_insts) * num_ranks if rank_valu_insts else 0
@@ -177,28 +237,31 @@ def load_and_aggregate(csv_files):
     return aggregated
 
 
-def plot_raw_counts(ax, deltas):
+def plot_raw_counts(ax, deltas, counter_set='fp64'):
     """Plot raw instruction counts as lines + stacked area."""
     if not deltas:
         return
     
+    set_info = COUNTER_SETS[counter_set]
+    columns = set_info['columns']
+    labels = set_info['labels']
+    colors = set_info['colors']
+    set_name = set_info['name']
+    
     x = [d['sample_id'] for d in deltas]
     total_insts = [d['total_instructions'] for d in deltas]
     valu_insts = [d['valu_instructions'] for d in deltas]
-    fp64_add = [d['fp64_add'] for d in deltas]
-    fp64_mul = [d['fp64_mul'] for d in deltas]
-    fp64_fma = [d['fp64_fma'] for d in deltas]
-    fp64_trans = [d['fp64_trans'] for d in deltas]
-    fp64_mfma = [d['fp64_mfma'] for d in deltas]
+    
+    # Extract counter-specific data
+    counter_data = []
+    for col in columns:
+        counter_data.append([d[col] for d in deltas])
     
     # Check if we have variability data (from multi-rank aggregation)
     has_variability = 'total_insts_min' in deltas[0]
     
-    # Stacked area for FP64 components
-    ax.stackplot(x, fp64_add, fp64_mul, fp64_fma, fp64_trans, fp64_mfma,
-                 labels=['FP64 ADD', 'FP64 MUL', 'FP64 FMA', 'FP64 Trans', 'FP64 MFMA'],
-                 colors=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
-                 alpha=0.7)
+    # Stacked area for counter components
+    ax.stackplot(x, *counter_data, labels=labels, colors=colors, alpha=0.7)
     
     # Variability bands (if multi-rank data)
     if has_variability:
@@ -218,7 +281,7 @@ def plot_raw_counts(ax, deltas):
     
     ax.set_xlabel('Sample Period')
     ax.set_ylabel('Instruction Count')
-    ax.set_title('Instruction Mix Over Time (Raw Counts)')
+    ax.set_title(f'Instruction Mix Over Time (Raw Counts) - {set_name}')
     ax.legend(loc='upper left', fontsize='small')
     ax.grid(True, alpha=0.3)
     
@@ -228,50 +291,42 @@ def plot_raw_counts(ax, deltas):
     )
 
 
-def plot_percentage(ax, deltas):
-    """Plot FP64 components as percentage of VALU."""
+def plot_percentage(ax, deltas, counter_set='fp64'):
+    """Plot counter components as percentage of VALU."""
     if not deltas:
         return
+    
+    set_info = COUNTER_SETS[counter_set]
+    columns = set_info['columns']
+    labels = set_info['labels']
+    colors = set_info['colors']
+    set_name = set_info['name']
     
     x = [d['sample_id'] for d in deltas]
     
     # Compute percentages (handle division by zero)
-    pct_add = []
-    pct_mul = []
-    pct_fma = []
-    pct_trans = []
-    pct_mfma = []
+    pct_data = [[] for _ in columns]
     
     for d in deltas:
         valu = d['valu_instructions']
-        if valu > 0:
-            pct_add.append(100.0 * d['fp64_add'] / valu)
-            pct_mul.append(100.0 * d['fp64_mul'] / valu)
-            pct_fma.append(100.0 * d['fp64_fma'] / valu)
-            pct_trans.append(100.0 * d['fp64_trans'] / valu)
-            pct_mfma.append(100.0 * d['fp64_mfma'] / valu)
-        else:
-            pct_add.append(0)
-            pct_mul.append(0)
-            pct_fma.append(0)
-            pct_trans.append(0)
-            pct_mfma.append(0)
+        for i, col in enumerate(columns):
+            if valu > 0:
+                pct_data[i].append(100.0 * d[col] / valu)
+            else:
+                pct_data[i].append(0)
     
-    # Stacked area for FP64 percentage
-    ax.stackplot(x, pct_add, pct_mul, pct_fma, pct_trans, pct_mfma,
-                 labels=['FP64 ADD', 'FP64 MUL', 'FP64 FMA', 'FP64 Trans', 'FP64 MFMA'],
-                 colors=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
-                 alpha=0.7)
+    # Stacked area for percentage
+    ax.stackplot(x, *pct_data, labels=labels, colors=colors, alpha=0.7)
     
     ax.set_xlabel('Sample Period')
     ax.set_ylabel('Percentage of VALU (%)')
-    ax.set_title('FP64 Instruction Mix Over Time (% of VALU)')
+    ax.set_title(f'{set_name} Instruction Mix Over Time (% of VALU)')
     ax.legend(loc='upper left', fontsize='small')
     ax.grid(True, alpha=0.3)
     ax.set_ylim(0, 100)
 
 
-def generate_plots(csv_files, output_prefix=None):
+def generate_plots(csv_files, output_prefix=None, counter_set=None):
     """Generate PDF with time-series plots."""
     if not HAS_MATPLOTLIB:
         print("Error: matplotlib is required for plotting.")
@@ -282,15 +337,18 @@ def generate_plots(csv_files, output_prefix=None):
     if isinstance(csv_files, str):
         csv_files = [csv_files]
     
+    # Get counter set (fp64 is default)
+    counter_set = get_counter_set(csv_files, counter_set)
+    
     # Load and aggregate data from all files
     if len(csv_files) == 1:
         rows = load_csv(csv_files[0])
         if not rows:
             print(f"Error: No data found in {csv_files[0]}")
             return None
-        deltas = compute_deltas(rows)
+        deltas = compute_deltas(rows, counter_set)
     else:
-        deltas = load_and_aggregate(csv_files)
+        deltas = load_and_aggregate(csv_files, counter_set)
     
     if not deltas:
         print("Error: Could not compute deltas from input files")
@@ -301,21 +359,23 @@ def generate_plots(csv_files, output_prefix=None):
         output_prefix = "fp64_monitor"
     output_file = f"{output_prefix}_timeseries.pdf"
     
+    set_name = COUNTER_SETS[counter_set]['name']
+    
     # Create title
     if len(csv_files) == 1:
-        title = f'FP64 Monitor Time-Series Analysis\n{Path(csv_files[0]).name}'
+        title = f'{set_name} Monitor Time-Series Analysis\n{Path(csv_files[0]).name}'
     else:
-        title = f'FP64 Monitor Time-Series Analysis\n({len(csv_files)} files aggregated)'
+        title = f'{set_name} Monitor Time-Series Analysis\n({len(csv_files)} files aggregated)'
     
     # Create figure with two subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     fig.suptitle(title, fontsize=14, fontweight='bold')
     
     # Plot raw counts (full timeline including idle periods)
-    plot_raw_counts(ax1, deltas)
+    plot_raw_counts(ax1, deltas, counter_set)
     
     # Plot percentages
-    plot_percentage(ax2, deltas)
+    plot_percentage(ax2, deltas, counter_set)
     
     plt.tight_layout()
     plt.subplots_adjust(top=0.92)
@@ -328,7 +388,7 @@ def generate_plots(csv_files, output_prefix=None):
     return output_file
 
 
-def generate_html_plots(csv_files, output_prefix=None):
+def generate_html_plots(csv_files, output_prefix=None, counter_set=None):
     """Generate interactive HTML with time-series plots using plotly."""
     if not HAS_PLOTLY:
         print("Error: plotly is required for HTML output.")
@@ -339,15 +399,24 @@ def generate_html_plots(csv_files, output_prefix=None):
     if isinstance(csv_files, str):
         csv_files = [csv_files]
     
+    # Get counter set (fp64 is default)
+    counter_set = get_counter_set(csv_files, counter_set)
+    
+    set_info = COUNTER_SETS[counter_set]
+    columns = set_info['columns']
+    labels = set_info['labels']
+    colors_list = set_info['colors']
+    set_name = set_info['name']
+    
     # Load and aggregate data from all files
     if len(csv_files) == 1:
         rows = load_csv(csv_files[0])
         if not rows:
             print(f"Error: No data found in {csv_files[0]}")
             return None
-        deltas = compute_deltas(rows)
+        deltas = compute_deltas(rows, counter_set)
     else:
-        deltas = load_and_aggregate(csv_files)
+        deltas = load_and_aggregate(csv_files, counter_set)
     
     if not deltas:
         print("Error: Could not compute deltas from input files")
@@ -365,11 +434,11 @@ def generate_html_plots(csv_files, output_prefix=None):
     elapsed = [d['elapsed_seconds'] for d in deltas]
     total_insts = [d['total_instructions'] for d in deltas]
     valu_insts = [d['valu_instructions'] for d in deltas]
-    fp64_add = [d['fp64_add'] for d in deltas]
-    fp64_mul = [d['fp64_mul'] for d in deltas]
-    fp64_fma = [d['fp64_fma'] for d in deltas]
-    fp64_trans = [d['fp64_trans'] for d in deltas]
-    fp64_mfma = [d['fp64_mfma'] for d in deltas]
+    
+    # Extract counter-specific data
+    counter_data = {}
+    for col in columns:
+        counter_data[col] = [d[col] for d in deltas]
     
     # Check if we have variability data (from multi-rank aggregation)
     has_variability = 'total_insts_min' in deltas[0]
@@ -380,76 +449,34 @@ def generate_html_plots(csv_files, output_prefix=None):
         valu_max = [d['valu_insts_max'] for d in deltas]
     
     # Compute percentages
-    pct_add, pct_mul, pct_fma, pct_trans, pct_mfma = [], [], [], [], []
+    pct_data = {col: [] for col in columns}
     for d in deltas:
         valu = d['valu_instructions']
-        if valu > 0:
-            pct_add.append(100.0 * d['fp64_add'] / valu)
-            pct_mul.append(100.0 * d['fp64_mul'] / valu)
-            pct_fma.append(100.0 * d['fp64_fma'] / valu)
-            pct_trans.append(100.0 * d['fp64_trans'] / valu)
-            pct_mfma.append(100.0 * d['fp64_mfma'] / valu)
-        else:
-            pct_add.append(0)
-            pct_mul.append(0)
-            pct_fma.append(0)
-            pct_trans.append(0)
-            pct_mfma.append(0)
+        for col in columns:
+            if valu > 0:
+                pct_data[col].append(100.0 * d[col] / valu)
+            else:
+                pct_data[col].append(0)
     
     # Create subplots
     fig = make_subplots(
         rows=2, cols=1,
         subplot_titles=(
-            'Instruction Mix Over Time (Raw Counts)',
-            'FP64 Instruction Mix Over Time (% of VALU)'
+            f'Instruction Mix Over Time (Raw Counts) - {set_name}',
+            f'{set_name} Instruction Mix Over Time (% of VALU)'
         ),
         vertical_spacing=0.12
     )
     
-    # Colors for FP64 components
-    colors = {
-        'add': '#1f77b4',
-        'mul': '#ff7f0e', 
-        'fma': '#2ca02c',
-        'trans': '#d62728',
-        'mfma': '#9467bd'
-    }
-    
-    # Chart 1: Raw counts - stacked area for FP64 components
-    fig.add_trace(go.Scatter(
-        x=x, y=fp64_add, name='FP64 ADD', fill='tozeroy',
-        mode='lines', line=dict(width=0.5, color=colors['add']),
-        stackgroup='fp64', groupnorm='',
-        hovertemplate='Sample %{x}<br>FP64 ADD: %{y:,.0f}<extra></extra>'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=fp64_mul, name='FP64 MUL', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['mul']),
-        stackgroup='fp64',
-        hovertemplate='Sample %{x}<br>FP64 MUL: %{y:,.0f}<extra></extra>'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=fp64_fma, name='FP64 FMA', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['fma']),
-        stackgroup='fp64',
-        hovertemplate='Sample %{x}<br>FP64 FMA: %{y:,.0f}<extra></extra>'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=fp64_trans, name='FP64 Trans', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['trans']),
-        stackgroup='fp64',
-        hovertemplate='Sample %{x}<br>FP64 Trans: %{y:,.0f}<extra></extra>'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=fp64_mfma, name='FP64 MFMA', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['mfma']),
-        stackgroup='fp64',
-        hovertemplate='Sample %{x}<br>FP64 MFMA: %{y:,.0f}<extra></extra>'
-    ), row=1, col=1)
+    # Chart 1: Raw counts - stacked area for counter components
+    for i, (col, label, color) in enumerate(zip(columns, labels, colors_list)):
+        fill = 'tozeroy' if i == 0 else 'tonexty'
+        fig.add_trace(go.Scatter(
+            x=x, y=counter_data[col], name=label, fill=fill,
+            mode='lines', line=dict(width=0.5, color=color),
+            stackgroup='counters', groupnorm='',
+            hovertemplate=f'Sample %{{x}}<br>{label}: %{{y:,.0f}}<extra></extra>'
+        ), row=1, col=1)
     
     # Chart 1: Variability bands (if multi-rank data)
     if has_variability:
@@ -495,51 +522,21 @@ def generate_html_plots(csv_files, output_prefix=None):
     ), row=1, col=1)
     
     # Chart 2: Percentage stacked area
-    fig.add_trace(go.Scatter(
-        x=x, y=pct_add, name='FP64 ADD %', fill='tozeroy',
-        mode='lines', line=dict(width=0.5, color=colors['add']),
-        stackgroup='pct', groupnorm='',
-        hovertemplate='Sample %{x}<br>FP64 ADD: %{y:.2f}%<extra></extra>',
-        showlegend=False
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=pct_mul, name='FP64 MUL %', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['mul']),
-        stackgroup='pct',
-        hovertemplate='Sample %{x}<br>FP64 MUL: %{y:.2f}%<extra></extra>',
-        showlegend=False
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=pct_fma, name='FP64 FMA %', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['fma']),
-        stackgroup='pct',
-        hovertemplate='Sample %{x}<br>FP64 FMA: %{y:.2f}%<extra></extra>',
-        showlegend=False
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=pct_trans, name='FP64 Trans %', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['trans']),
-        stackgroup='pct',
-        hovertemplate='Sample %{x}<br>FP64 Trans: %{y:.2f}%<extra></extra>',
-        showlegend=False
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=x, y=pct_mfma, name='FP64 MFMA %', fill='tonexty',
-        mode='lines', line=dict(width=0.5, color=colors['mfma']),
-        stackgroup='pct',
-        hovertemplate='Sample %{x}<br>FP64 MFMA: %{y:.2f}%<extra></extra>',
-        showlegend=False
-    ), row=2, col=1)
+    for i, (col, label, color) in enumerate(zip(columns, labels, colors_list)):
+        fill = 'tozeroy' if i == 0 else 'tonexty'
+        fig.add_trace(go.Scatter(
+            x=x, y=pct_data[col], name=f'{label} %', fill=fill,
+            mode='lines', line=dict(width=0.5, color=color),
+            stackgroup='pct', groupnorm='',
+            hovertemplate=f'Sample %{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>',
+            showlegend=False
+        ), row=2, col=1)
     
     # Update layout
     if num_files == 1:
-        title_text = 'FP64 Monitor Time-Series Analysis'
+        title_text = f'{set_name} Monitor Time-Series Analysis'
     else:
-        title_text = f'FP64 Monitor Time-Series Analysis ({num_files} files aggregated)'
+        title_text = f'{set_name} Monitor Time-Series Analysis ({num_files} files aggregated)'
     
     fig.update_layout(
         title=dict(
@@ -579,6 +576,8 @@ def main():
     parser.add_argument('--output', '-o', help='Output filename prefix (default: fp64_monitor)')
     parser.add_argument('--html', action='store_true', 
                         help='Generate interactive HTML using plotly (default: PDF using matplotlib)')
+    parser.add_argument('--counters', '-c', choices=['fp64', 'fp32', 'int', 'auto'],
+                        help='Counter set to plot (default: fp64, use "auto" to detect)')
     
     args = parser.parse_args()
     
@@ -591,9 +590,9 @@ def main():
     print(f"Processing {len(args.csv_files)} file(s)...")
     
     if args.html:
-        result = generate_html_plots(args.csv_files, args.output)
+        result = generate_html_plots(args.csv_files, args.output, args.counters)
     else:
-        result = generate_plots(args.csv_files, args.output)
+        result = generate_plots(args.csv_files, args.output, args.counters)
     
     if result is None:
         sys.exit(1)
