@@ -24,6 +24,7 @@
 #endif
 
 #include <dlfcn.h>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,9 @@ namespace {
 
 // Trampoline for the real main()
 static int (*main_real)(int, char**, char**);
+
+// Atomic reentry guard for fp64_monitor_main
+std::atomic<int> g_main_reentry{0};
 
 int fp64_monitor_main(int argc, char** argv, char** envp) {
     // Skip wrapping for shell scripts to avoid interference
@@ -55,12 +59,11 @@ int fp64_monitor_main(int argc, char** argv, char** envp) {
         }
     }
     
-    // Prevent re-entry
-    static int reentry = 0;
-    if (reentry > 0) {
+    // Prevent re-entry using atomic compare-exchange
+    int expected = 0;
+    if (!g_main_reentry.compare_exchange_strong(expected, 1)) {
         return main_real(argc, argv, envp);
     }
-    reentry = 1;
 
     // Indicate that our wrapper is active (verbose mode only)
     if (getenv("FP64_MONITOR_VERBOSE")) {
@@ -84,6 +87,9 @@ typedef int (*libc_start_main_t)(
     int (*)(int, char**, char**), void (*)(void),
     void (*)(void), void*);
 
+// Atomic reentry guard for __libc_start_main
+std::atomic<int> g_libc_start_reentry{0};
+
 } // anonymous namespace
 
 extern "C" {
@@ -95,10 +101,11 @@ __libc_start_main(int (*_main)(int, char**, char**), int _argc, char** _argv,
                   int (*_init)(int, char**, char**), void (*_fini)(void),
                   void (*_rtld_fini)(void), void* _stack_end)
 {
-    // Prevent re-entry
-    static int reentry = 0;
-    if (reentry > 0) return -1;
-    reentry = 1;
+    // Prevent re-entry using atomic compare-exchange
+    int expected = 0;
+    if (!g_libc_start_reentry.compare_exchange_strong(expected, 1)) {
+        return -1;
+    }
 
     // Get address of this function for comparison
     void* this_func = __builtin_return_address(0);

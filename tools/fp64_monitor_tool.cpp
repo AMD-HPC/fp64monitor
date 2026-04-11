@@ -35,8 +35,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -234,6 +236,10 @@ struct ToolState {
     
     std::mutex output_mutex;
     std::mutex data_mutex;
+    
+    // Synchronization for clean shutdown
+    std::mutex sampling_mutex;
+    std::condition_variable sampling_cv;
     
     // Memory monitoring
     MemoryMonitor memory_monitor;
@@ -528,7 +534,11 @@ void sampling_thread_func() {
                     g_state.output->flush();
                 }
             }
-            g_state.sampling.store(false);
+            {
+                std::lock_guard<std::mutex> lock(g_state.sampling_mutex);
+                g_state.sampling.store(false);
+            }
+            g_state.sampling_cv.notify_all();
             break;  // Exit the loop
         }
         
@@ -583,7 +593,11 @@ void sampling_thread_func() {
             g_state.output->flush();
         }
         
-        g_state.sampling.store(false);
+        {
+            std::lock_guard<std::mutex> lock(g_state.sampling_mutex);
+            g_state.sampling.store(false);
+        }
+        g_state.sampling_cv.notify_all();
         std::this_thread::sleep_for(g_state.config.sampling_interval);
     }
     
@@ -808,11 +822,10 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     return 0;
 }
 
-void tool_fini(void*) {
-    static bool once{false};
-    if (once) return;
-    once = true;
-    
+// Thread-safe guard for tool_fini (prevents double-execution)
+std::once_flag g_fini_flag;
+
+void tool_fini_impl() {
     // FIRST: Shutdown memory monitor to prevent rsmi/hip queries
     // This must happen before signaling the sampling thread to stop,
     // because the thread might be in the middle of a memory query.
@@ -831,8 +844,20 @@ void tool_fini(void*) {
     
     // Signal thread to stop
     g_state.running.store(false);
-    // wait for it to stop
-    while(g_state.sampling.load()) {}
+    
+    // Wait for sampling to complete using condition variable (not spin-wait)
+    // Use a timeout to avoid hanging forever if something goes wrong
+    {
+        std::unique_lock<std::mutex> lock(g_state.sampling_mutex);
+        bool stopped = g_state.sampling_cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            []{ return !g_state.sampling.load(); }
+        );
+        if (!stopped && g_state.config.verbose && is_rank0) {
+            std::cerr << "[FP64 Monitor] Warning: Timeout waiting for sampling thread\n";
+        }
+    }
     
     // Check file state - if closed, state may be corrupted (e.g., rocBLAS cleanup)
     bool file_valid = g_state.output_file && g_state.output_file->is_open();
@@ -886,10 +911,24 @@ void tool_fini(void*) {
         }
     }
     
-    // Detach thread if file was still open (normal shutdown)
-    // Skip if file was already closed (corrupted state - thread ptr may be invalid)
-    if (file_valid && g_state.sampling_thread && g_state.sampling_thread->joinable()) {
-        g_state.sampling_thread->detach();
+    // Join the sampling thread properly (with timeout to avoid hanging)
+    // This is safer than detach() which can leave the thread accessing freed memory
+    if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
+        // The thread should have exited by now since we waited for sampling to stop
+        // Use a short additional wait just in case
+        auto join_future = std::async(std::launch::async, []{
+            if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
+                g_state.sampling_thread->join();
+            }
+        });
+        
+        if (join_future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+            // Thread didn't join in time - detach as fallback to prevent crash
+            if (g_state.config.verbose && is_rank0) {
+                std::cerr << "[FP64 Monitor] Warning: Thread join timeout, detaching\n";
+            }
+            // Can't detach after join attempt started, thread will be abandoned
+        }
     }
     
     g_state.shutdown_complete.store(true);
@@ -897,6 +936,11 @@ void tool_fini(void*) {
     if (g_state.config.verbose && is_rank0) {
         std::cerr << "[FP64 Monitor] Done. Total samples: " << g_state.sample_count << "\n";
     }
+}
+
+void tool_fini(void*) {
+    // Use std::call_once for thread-safe single execution
+    std::call_once(g_fini_flag, tool_fini_impl);
 }
 
 }  // namespace
