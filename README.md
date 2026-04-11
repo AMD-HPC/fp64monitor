@@ -85,6 +85,7 @@ mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
 | `--gpu ID` | GPU ID to monitor (default: 0) |
 | `--tmpdir DIR` | Fast local storage for temp output (e.g., /dev/shm) |
 | `--use-rocmsmi` | Enable rocm-smi memory monitoring |
+| `--preload` | Wrap main function to prevent possible shutdown race condition |
 | `--counters TYPE` | Counter set: fp64 (default), fp32, fp16, or int |
 | `--no-analyze` | Disable auto-analysis after run |
 | `--verbose` | Enable verbose output |
@@ -110,6 +111,7 @@ ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
 | `FP64_MONITOR_TMPDIR` | (none) | Fast local storage for temp files (e.g., /dev/shm) |
 | `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, or int |
 | `FP64_MONITOR_USE_ROCMSMI` | 0 | Enable rocm-smi memory monitoring (1=enabled) |
+| `FP64_MONITOR_PRELOAD` | 0 | Enable LD_PRELOAD wrapper for clean shutdown (1=enabled) |
 | `FP64_MONITOR_ANALYZE` | 1 | Auto-analyze results after run (0=disabled) |
 | `FP64_MONITOR_VERBOSE` | 0 | Verbose output (1=enabled) |
 

@@ -15,6 +15,7 @@
 #   --gpu ID              GPU ID to monitor (default: 0)
 #   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
 #   --use-rocmsmi         Enable rocm-smi memory monitoring
+#   --preload             Wrap main function to prevent possible shutdown race condition
 #   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
 #   --no-analyze          Disable auto-analysis after run
 #   --verbose             Enable verbose output
@@ -28,6 +29,7 @@
 #   FP64_MONITOR_GPU           - GPU ID to monitor (default: 0)
 #   FP64_MONITOR_TMPDIR        - Fast local storage for temp output
 #   FP64_MONITOR_USE_ROCMSMI   - Set to 1 to enable rocm-smi memory monitoring
+#   FP64_MONITOR_PRELOAD       - Set to 1 to enable LD_PRELOAD wrapper
 #   FP64_MONITOR_ANALYZE       - Set to 0 to disable auto-analysis (default: 1)
 #   FP64_MONITOR_VERBOSE       - Set to 1 for verbose output
 #
@@ -47,6 +49,7 @@ Options:
   --gpu ID              GPU ID to monitor (default: 0)
   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
   --use-rocmsmi         Enable rocm-smi memory monitoring
+  --preload             Wrap main function to prevent possible shutdown race condition
   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
   --no-analyze          Disable auto-analysis after run
   --verbose             Enable verbose output
@@ -90,6 +93,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --use-rocmsmi)
             export FP64_MONITOR_USE_ROCMSMI=1
+            export FP64_MONITOR_PRELOAD=1
+            shift
+            ;;
+        --preload)
+            export FP64_MONITOR_PRELOAD=1
             shift
             ;;
         --counters)
@@ -150,11 +158,12 @@ else
     export ROCP_TOOL_LIBRARIES="${LIB_PATH}"
 fi
 
-# When FP64_MONITOR_USE_ROCMSMI=1, additionally use LD_PRELOAD so our __libc_start_main
-# wrapper can intercept main() exit and shut down before rocm-smi is torn down.
+# When FP64_MONITOR_USE_ROCMSMI=1 or FP64_MONITOR_PRELOAD=1, use LD_PRELOAD so our
+# __libc_start_main wrapper can intercept main() exit and shut down cleanly.
+# This prevents possible race conditions when rocm-smi or other libraries are torn down.
 # Save original LD_PRELOAD to restore after application runs.
 OLD_LD_PRELOAD="${LD_PRELOAD:-}"
-if [ "${FP64_MONITOR_USE_ROCMSMI}" = "1" ]; then
+if [ "${FP64_MONITOR_PRELOAD}" = "1" ]; then
     if [ -n "${LD_PRELOAD}" ]; then
         export LD_PRELOAD="${LIB_PATH}:${LD_PRELOAD}"
     else
