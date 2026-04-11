@@ -56,7 +56,8 @@ void MemoryMonitor::query_hip_memory(MemoryStats& stats) {
     // Try to set device (may fail if HIP not ready)
     hipError_t err = hipSetDevice(gpu_id_);
     if (err != hipSuccess) {
-        hipError_t err = hipSetDevice(0);
+        // Fallback to device 0
+        err = hipSetDevice(0);
         if (err != hipSuccess) {
             stats.hip_valid = false;
             return;

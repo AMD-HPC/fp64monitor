@@ -34,9 +34,14 @@
 #include <rocprofiler-sdk/rocprofiler.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <climits>
+#include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -51,6 +56,31 @@
 namespace {
 
 using namespace measure_flops;
+
+// Safe string-to-long conversion with validation
+// Returns default_val if the string is null, empty, or not a valid integer
+// Also returns default_val if the value is out of the specified range
+long safe_strtol(const char* str, long default_val, long min_val = LONG_MIN, long max_val = LONG_MAX) {
+    if (str == nullptr || str[0] == '\0') {
+        return default_val;
+    }
+    
+    char* endptr = nullptr;
+    errno = 0;
+    long val = std::strtol(str, &endptr, 10);
+    
+    // Check for conversion errors
+    if (errno == ERANGE || endptr == str || *endptr != '\0') {
+        return default_val;
+    }
+    
+    // Check range
+    if (val < min_val || val > max_val) {
+        return default_val;
+    }
+    
+    return val;
+}
 
 // Try to detect MPI rank from common environment variables
 // Returns -1 if not found
@@ -70,37 +100,104 @@ int get_mpi_rank() {
     
     for (const char** var = rank_vars; *var != nullptr; ++var) {
         if (const char* val = std::getenv(*var)) {
-            return std::atoi(val);
+            long rank = safe_strtol(val, -1, 0, INT_MAX);
+            return static_cast<int>(rank);
         }
     }
     return -1;
 }
 
-// Get hostname
+// Sanitize a string to be safe for use as a path component
+// Removes or replaces characters that could cause path traversal
+std::string sanitize_path_component(const std::string& input) {
+    std::string result;
+    result.reserve(input.size());
+    
+    for (size_t i = 0; i < input.size(); ++i) {
+        char c = input[i];
+        
+        // Skip path separators
+        if (c == '/' || c == '\\') {
+            result += '_';
+            continue;
+        }
+        
+        // Skip .. sequences (path traversal)
+        if (c == '.' && i + 1 < input.size() && input[i + 1] == '.') {
+            result += '_';
+            ++i;  // Skip next dot too
+            continue;
+        }
+        
+        // Skip null bytes
+        if (c == '\0') {
+            continue;
+        }
+        
+        result += c;
+    }
+    
+    // Don't allow empty result
+    if (result.empty()) {
+        return "unknown";
+    }
+    
+    return result;
+}
+
+// Get hostname (sanitized for safe use in filenames)
 std::string get_hostname() {
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
         hostname[sizeof(hostname) - 1] = '\0';
-        return std::string(hostname);
+        return sanitize_path_component(std::string(hostname));
     }
     return "unknown";
 }
 
+// Recursively create directories (like mkdir -p)
+// Returns true on success, false on failure
+// Thread-safe: uses mkdir with EEXIST handling
+bool mkdir_recursive(const std::string& path) {
+    if (path.empty()) {
+        return false;
+    }
+    
+    // Check if it already exists
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0) {
+        return S_ISDIR(st.st_mode);
+    }
+    
+    // Find the parent directory
+    size_t last_slash = path.rfind('/');
+    if (last_slash != std::string::npos && last_slash > 0) {
+        std::string parent = path.substr(0, last_slash);
+        if (!mkdir_recursive(parent)) {
+            return false;
+        }
+    }
+    
+    // Create this directory
+    // mkdir is atomic on POSIX, EEXIST means another process created it
+    if (mkdir(path.c_str(), 0755) != 0 && errno != EEXIST) {
+        return false;
+    }
+    
+    return true;
+}
+
 // Get output directory name from environment or use default
-// Creates the directory if it doesn't exist
+// Creates the directory (recursively) if it doesn't exist
 // All ranks attempt creation (mkdir with EEXIST is safe for concurrent calls)
 std::string get_output_directory() {
     const char* dir_env = std::getenv("FP64_MONITOR_DIR");
     std::string dir_name = dir_env ? dir_env : "fp64_monitor_output";
     
-    // All ranks try to create the directory - this is safe because:
-    // 1. mkdir() is atomic on POSIX systems
-    // 2. We handle EEXIST to allow concurrent creation attempts
+    // Try to create the directory recursively
     struct stat st;
     if (stat(dir_name.c_str(), &st) != 0) {
-        // Directory doesn't exist, try to create it
-        if (mkdir(dir_name.c_str(), 0755) != 0 && errno != EEXIST) {
-            // Failed to create, fall back to current directory
+        if (!mkdir_recursive(dir_name)) {
             std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
                     << dir_name << ", using current directory\n";
             return "";
@@ -153,21 +250,70 @@ std::string expand_filename_pattern(const std::string& pattern) {
     return result;
 }
 
-// Copy a file from src to dst
+// Copy a file from src to dst with verification
 // Returns true on success, false on failure
 bool copy_file(const std::string& src, const std::string& dst) {
-    std::ifstream in(src, std::ios::binary);
+    // Open source file and get size
+    std::ifstream in(src, std::ios::binary | std::ios::ate);
     if (!in) {
         return false;
     }
     
-    std::ofstream out(dst, std::ios::binary);
+    std::streamsize src_size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    
+    if (src_size < 0) {
+        return false;
+    }
+    
+    // Open destination file
+    std::ofstream out(dst, std::ios::binary | std::ios::trunc);
     if (!out) {
         return false;
     }
     
-    out << in.rdbuf();
-    return out.good();
+    // Copy in chunks to handle large files and detect write errors
+    const size_t buffer_size = 64 * 1024;  // 64KB chunks
+    std::vector<char> buffer(buffer_size);
+    std::streamsize total_written = 0;
+    
+    while (in && out && total_written < src_size) {
+        in.read(buffer.data(), buffer_size);
+        std::streamsize bytes_read = in.gcount();
+        
+        if (bytes_read > 0) {
+            out.write(buffer.data(), bytes_read);
+            if (!out) {
+                // Write failed (disk full, etc.)
+                return false;
+            }
+            total_written += bytes_read;
+        }
+    }
+    
+    // Flush to ensure data is written to disk
+    out.flush();
+    
+    if (!out.good()) {
+        return false;
+    }
+    
+    // Close files
+    out.close();
+    in.close();
+    
+    // Verify destination file size matches source
+    struct stat src_stat, dst_stat;
+    if (stat(src.c_str(), &src_stat) != 0 || stat(dst.c_str(), &dst_stat) != 0) {
+        return false;
+    }
+    
+    if (src_stat.st_size != dst_stat.st_size) {
+        // Size mismatch - copy failed
+        return false;
+    }
+    
+    return true;
 }
 
 // Generate default output filename
@@ -234,6 +380,10 @@ struct ToolState {
     
     std::mutex output_mutex;
     std::mutex data_mutex;
+    
+    // Synchronization for clean shutdown
+    std::mutex sampling_mutex;
+    std::condition_variable sampling_cv;
     
     // Memory monitoring
     MemoryMonitor memory_monitor;
@@ -528,7 +678,11 @@ void sampling_thread_func() {
                     g_state.output->flush();
                 }
             }
-            g_state.sampling.store(false);
+            {
+                std::lock_guard<std::mutex> lock(g_state.sampling_mutex);
+                g_state.sampling.store(false);
+            }
+            g_state.sampling_cv.notify_all();
             break;  // Exit the loop
         }
         
@@ -583,7 +737,11 @@ void sampling_thread_func() {
             g_state.output->flush();
         }
         
-        g_state.sampling.store(false);
+        {
+            std::lock_guard<std::mutex> lock(g_state.sampling_mutex);
+            g_state.sampling.store(false);
+        }
+        g_state.sampling_cv.notify_all();
         std::this_thread::sleep_for(g_state.config.sampling_interval);
     }
     
@@ -608,19 +766,21 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     std::string output_format = "csv";  // Default to CSV for easier post-processing
     
     if (const char* interval = std::getenv("FP64_MONITOR_INTERVAL")) {
-        sampling_interval_ms = std::atoi(interval);
+        // Validate: 1ms to 1 hour (3600000ms)
+        sampling_interval_ms = static_cast<int>(safe_strtol(interval, 1000, 1, 3600000));
     }
     if (const char* gpu = std::getenv("FP64_MONITOR_GPU")) {
-        gpu_id = std::atoi(gpu);
+        // Validate: 0 to 255 (reasonable GPU count limit)
+        gpu_id = static_cast<int>(safe_strtol(gpu, 0, 0, 255));
     }
     if (const char* verbose = std::getenv("FP64_MONITOR_VERBOSE")) {
-        g_state.config.verbose = (std::atoi(verbose) != 0);
+        g_state.config.verbose = (safe_strtol(verbose, 0, 0, 1) != 0);
     }
     if (const char* format = std::getenv("FP64_MONITOR_FORMAT")) {
         output_format = format;
     }
     if (const char* usesmi = std::getenv("FP64_MONITOR_USE_ROCMSMI")) {
-        g_state.config.use_rocm_smi = (std::atoi(usesmi) != 0);
+        g_state.config.use_rocm_smi = (safe_strtol(usesmi, 0, 0, 1) != 0);
     }
     if (const char* tmpdir = std::getenv("FP64_MONITOR_TMPDIR")) {
         g_state.config.tmpdir = tmpdir;
@@ -675,11 +835,16 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     }
     
     // Open output file if specified
-    // Retry a few times in case of race condition with directory creation
+    // Retry only for transient errors (ENOENT when dir being created)
+    // Fail immediately for permanent errors (EACCES, ENOSPC, etc.)
     if (!file_to_open.empty()) {
         const int max_retries = 5;
-        for (int retry = 0; retry < max_retries; ++retry) {
+        bool should_retry = true;
+        
+        for (int retry = 0; retry < max_retries && should_retry; ++retry) {
+            errno = 0;
             g_state.output_file = std::make_unique<std::ofstream>(file_to_open);
+            
             if (g_state.output_file->is_open()) {
                 g_state.output = g_state.output_file.get();
                 if (g_state.config.verbose && is_rank0) {
@@ -687,14 +852,47 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
                 }
                 break;
             }
-            // Wait a bit and retry (directory might be being created by another rank)
-            if (retry < max_retries - 1) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // Check errno to decide if we should retry
+            int open_errno = errno;
+            switch (open_errno) {
+                case ENOENT:  // Directory doesn't exist yet (being created by another rank)
+                case EAGAIN:  // Resource temporarily unavailable
+#if EWOULDBLOCK != EAGAIN
+                case EWOULDBLOCK:
+#endif
+                    // Transient errors - retry after delay
+                    if (retry < max_retries - 1) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    break;
+                    
+                case EACCES:  // Permission denied
+                case EROFS:   // Read-only filesystem
+                case ENOSPC:  // No space left on device
+                case EDQUOT:  // Disk quota exceeded
+                case ELOOP:   // Too many symbolic links
+                case ENAMETOOLONG:  // Filename too long
+                    // Permanent errors - don't retry
+                    should_retry = false;
+                    if (g_state.config.verbose && is_rank0) {
+                        std::cerr << "[FP64 Monitor] File open failed (errno=" << open_errno 
+                                  << "): " << strerror(open_errno) << "\n";
+                    }
+                    break;
+                    
+                default:
+                    // Unknown error - retry once then give up
+                    if (retry >= 1) {
+                        should_retry = false;
+                    } else if (retry < max_retries - 1) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    break;
             }
         }
         
         if (!g_state.output_file || !g_state.output_file->is_open()) {
-            // Always warn about file open failure
             std::cerr << "[FP64 Monitor] Warning: Could not open " << file_to_open 
                       << ", using stdout\n";
             g_state.output = &std::cout;
@@ -808,11 +1006,10 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     return 0;
 }
 
-void tool_fini(void*) {
-    static bool once{false};
-    if (once) return;
-    once = true;
-    
+// Thread-safe guard for tool_fini (prevents double-execution)
+std::once_flag g_fini_flag;
+
+void tool_fini_impl() {
     // FIRST: Shutdown memory monitor to prevent rsmi/hip queries
     // This must happen before signaling the sampling thread to stop,
     // because the thread might be in the middle of a memory query.
@@ -831,8 +1028,20 @@ void tool_fini(void*) {
     
     // Signal thread to stop
     g_state.running.store(false);
-    // wait for it to stop
-    while(g_state.sampling.load()) {}
+    
+    // Wait for sampling to complete using condition variable (not spin-wait)
+    // Use a timeout to avoid hanging forever if something goes wrong
+    {
+        std::unique_lock<std::mutex> lock(g_state.sampling_mutex);
+        bool stopped = g_state.sampling_cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            []{ return !g_state.sampling.load(); }
+        );
+        if (!stopped && g_state.config.verbose && is_rank0) {
+            std::cerr << "[FP64 Monitor] Warning: Timeout waiting for sampling thread\n";
+        }
+    }
     
     // Check file state - if closed, state may be corrupted (e.g., rocBLAS cleanup)
     bool file_valid = g_state.output_file && g_state.output_file->is_open();
@@ -853,16 +1062,13 @@ void tool_fini(void*) {
     
     // Copy temp file to final destination if using tmpdir
     if (file_valid && !g_state.temp_filepath.empty() && !g_state.final_filepath.empty()) {
-        // Ensure the final directory exists
+        // Ensure the final directory exists (create recursively if needed)
         size_t last_slash = g_state.final_filepath.rfind('/');
         if (last_slash != std::string::npos) {
             std::string final_dir = g_state.final_filepath.substr(0, last_slash);
-            struct stat st;
-            if (stat(final_dir.c_str(), &st) != 0) {
-                if (mkdir(final_dir.c_str(), 0755) != 0 && errno != EEXIST) {
-                    std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
-                              << final_dir << " for final output\n";
-                }
+            if (!mkdir_recursive(final_dir)) {
+                std::cerr << "[FP64 Monitor] Warning: Could not create directory " 
+                          << final_dir << " for final output\n";
             }
         }
         
@@ -886,10 +1092,24 @@ void tool_fini(void*) {
         }
     }
     
-    // Detach thread if file was still open (normal shutdown)
-    // Skip if file was already closed (corrupted state - thread ptr may be invalid)
-    if (file_valid && g_state.sampling_thread && g_state.sampling_thread->joinable()) {
-        g_state.sampling_thread->detach();
+    // Join the sampling thread properly (with timeout to avoid hanging)
+    // This is safer than detach() which can leave the thread accessing freed memory
+    if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
+        // The thread should have exited by now since we waited for sampling to stop
+        // Use a short additional wait just in case
+        auto join_future = std::async(std::launch::async, []{
+            if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
+                g_state.sampling_thread->join();
+            }
+        });
+        
+        if (join_future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+            // Thread didn't join in time - detach as fallback to prevent crash
+            if (g_state.config.verbose && is_rank0) {
+                std::cerr << "[FP64 Monitor] Warning: Thread join timeout, detaching\n";
+            }
+            // Can't detach after join attempt started, thread will be abandoned
+        }
     }
     
     g_state.shutdown_complete.store(true);
@@ -897,6 +1117,11 @@ void tool_fini(void*) {
     if (g_state.config.verbose && is_rank0) {
         std::cerr << "[FP64 Monitor] Done. Total samples: " << g_state.sample_count << "\n";
     }
+}
+
+void tool_fini(void*) {
+    // Use std::call_once for thread-safe single execution
+    std::call_once(g_fini_flag, tool_fini_impl);
 }
 
 }  // namespace
@@ -920,7 +1145,7 @@ rocprofiler_configure(uint32_t                 version,
     // Check verbose setting early (before tool_init)
     bool verbose = false;
     if (const char* v = std::getenv("FP64_MONITOR_VERBOSE")) {
-        verbose = (std::atoi(v) != 0);
+        verbose = (safe_strtol(v, 0, 0, 1) != 0);
     }
     
     // Only print version info if verbose and rank 0 (or non-MPI)
