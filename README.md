@@ -57,6 +57,20 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
+### Build Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ENABLE_ROCM_SMI` | OFF | Enable ROCm SMI memory monitoring (requires librocm_smi64) |
+| `BUILD_TESTS` | ON | Build test programs |
+
+Example with ROCm SMI support:
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_ROCM_SMI=ON
+```
+
+**Note**: If `--use-rocmsmi` is requested at runtime but the tool was built without ROCm SMI support, an error message will be displayed and the tool will continue without ROCm SMI features.
+
 ## Usage
 
 ### Wrapper Script (Recommended)

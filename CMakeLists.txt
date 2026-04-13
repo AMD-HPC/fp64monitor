@@ -31,70 +31,79 @@ find_package(rocprofiler-sdk REQUIRED)
 find_package(Threads REQUIRED)
 find_package(hip REQUIRED)
 
-# Optional: Find ROCm SMI for detailed GPU memory monitoring
-find_library(ROCM_SMI_LIBRARY
-    NAMES rocm_smi64
-    HINTS ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
-    PATH_SUFFIXES lib lib64
-)
-find_path(ROCM_SMI_INCLUDE_DIR
-    NAMES rocm_smi/rocm_smi.h
-    HINTS ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
-    PATH_SUFFIXES include
-)
+# Option to enable ROCm SMI support (disabled by default)
+option(ENABLE_ROCM_SMI "Enable ROCm SMI memory monitoring support (requires librocm_smi64)" OFF)
 
-# Find libdrm (may be in rocm_sysdeps for TheRock builds)
-find_path(LIBDRM_INCLUDE_DIR
-    NAMES libdrm/drm.h
-    HINTS 
-        ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
-        ${ROCM_PATH}/lib/rocm_sysdeps ENV ROCM_PATH
-    PATH_SUFFIXES include lib/rocm_sysdeps/include
-)
-
-find_library(LIBDRM_LIBRARY
-    NAMES drm rocm_sysdeps_drm
-    HINTS 
-        ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
-        ${ROCM_PATH}/lib/rocm_sysdeps ENV ROCM_PATH
-    PATH_SUFFIXES lib lib64 lib/rocm_sysdeps/lib
-)
-
-if(LIBDRM_INCLUDE_DIR)
-    message(STATUS "libdrm headers found: ${LIBDRM_INCLUDE_DIR}")
-endif()
-if(LIBDRM_LIBRARY)
-    message(STATUS "libdrm library found: ${LIBDRM_LIBRARY}")
-endif()
-
-# Check if ROCm SMI can actually be compiled (may fail if libdrm headers are missing)
+# ROCm SMI support - only search if enabled
 set(HAVE_ROCM_SMI FALSE)
-if(ROCM_SMI_LIBRARY AND ROCM_SMI_INCLUDE_DIR)
-    include(CheckCXXSourceCompiles)
-    set(CMAKE_REQUIRED_INCLUDES ${ROCM_SMI_INCLUDE_DIR})
-    if(LIBDRM_INCLUDE_DIR)
-        list(APPEND CMAKE_REQUIRED_INCLUDES ${LIBDRM_INCLUDE_DIR})
-    endif()
-    set(CMAKE_REQUIRED_LIBRARIES ${ROCM_SMI_LIBRARY})
-    if(LIBDRM_LIBRARY)
-        list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBDRM_LIBRARY})
-    endif()
-    check_cxx_source_compiles("
-        #include <rocm_smi/rocm_smi.h>
-        int main() {
-            rsmi_status_t status = rsmi_init(0);
-            return 0;
-        }
-    " ROCM_SMI_COMPILES)
+if(ENABLE_ROCM_SMI)
+    message(STATUS "ROCm SMI support: ENABLED (searching for library)")
     
-    if(ROCM_SMI_COMPILES)
-        set(HAVE_ROCM_SMI TRUE)
-        message(STATUS "ROCm SMI found and compiles: ${ROCM_SMI_LIBRARY}")
+    find_library(ROCM_SMI_LIBRARY
+        NAMES rocm_smi64
+        HINTS ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
+        PATH_SUFFIXES lib lib64
+    )
+    find_path(ROCM_SMI_INCLUDE_DIR
+        NAMES rocm_smi/rocm_smi.h
+        HINTS ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
+        PATH_SUFFIXES include
+    )
+
+    # Find libdrm (may be in rocm_sysdeps for TheRock builds)
+    find_path(LIBDRM_INCLUDE_DIR
+        NAMES libdrm/drm.h
+        HINTS 
+            ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
+            ${ROCM_PATH}/lib/rocm_sysdeps ENV ROCM_PATH
+        PATH_SUFFIXES include lib/rocm_sysdeps/include
+    )
+
+    find_library(LIBDRM_LIBRARY
+        NAMES drm rocm_sysdeps_drm
+        HINTS 
+            ${ROCM_PATH} ENV ROCM_PATH /opt/rocm
+            ${ROCM_PATH}/lib/rocm_sysdeps ENV ROCM_PATH
+        PATH_SUFFIXES lib lib64 lib/rocm_sysdeps/lib
+    )
+
+    if(LIBDRM_INCLUDE_DIR)
+        message(STATUS "libdrm headers found: ${LIBDRM_INCLUDE_DIR}")
+    endif()
+    if(LIBDRM_LIBRARY)
+        message(STATUS "libdrm library found: ${LIBDRM_LIBRARY}")
+    endif()
+
+    # Check if ROCm SMI can actually be compiled (may fail if libdrm headers are missing)
+    if(ROCM_SMI_LIBRARY AND ROCM_SMI_INCLUDE_DIR)
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_INCLUDES ${ROCM_SMI_INCLUDE_DIR})
+        if(LIBDRM_INCLUDE_DIR)
+            list(APPEND CMAKE_REQUIRED_INCLUDES ${LIBDRM_INCLUDE_DIR})
+        endif()
+        set(CMAKE_REQUIRED_LIBRARIES ${ROCM_SMI_LIBRARY})
+        if(LIBDRM_LIBRARY)
+            list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBDRM_LIBRARY})
+        endif()
+        check_cxx_source_compiles("
+            #include <rocm_smi/rocm_smi.h>
+            int main() {
+                rsmi_status_t status = rsmi_init(0);
+                return 0;
+            }
+        " ROCM_SMI_COMPILES)
+        
+        if(ROCM_SMI_COMPILES)
+            set(HAVE_ROCM_SMI TRUE)
+            message(STATUS "ROCm SMI found and compiles: ${ROCM_SMI_LIBRARY}")
+        else()
+            message(WARNING "ENABLE_ROCM_SMI=ON but ROCm SMI headers incomplete (missing libdrm?)")
+        endif()
     else()
-        message(STATUS "ROCm SMI found but headers incomplete (missing libdrm?) - disabling")
+        message(WARNING "ENABLE_ROCM_SMI=ON but librocm_smi64 not found")
     endif()
 else()
-    message(STATUS "ROCm SMI not found - detailed GPU memory stats will be unavailable")
+    message(STATUS "ROCm SMI support: DISABLED (use -DENABLE_ROCM_SMI=ON to enable)")
 endif()
 
 # Determine ROCm version from path (e.g., /opt/rocm-6.0.0 or rocm-7.13.0a20260324-gfx94X)
@@ -168,7 +177,7 @@ if(HAVE_ROCM_SMI)
         ${ROCM_SMI_LIBRARY}
         ${LIBDRM_LIBRARY}
     )
-    target_compile_definitions(measure_flops_lib PRIVATE USE_ROCM_SMI)
+    target_compile_definitions(measure_flops_lib PRIVATE HAVE_ROCM_SMI)
 endif()
 
 target_compile_options(measure_flops_lib PRIVATE
@@ -209,6 +218,7 @@ target_compile_options(fp64_monitor_tool PRIVATE
 target_compile_definitions(fp64_monitor_tool PRIVATE
     ROCM_VERSION_STRING="${ROCM_VERSION_STRING}"
     FP64_MONITOR_VERSION="${PROJECT_VERSION}"
+    $<$<BOOL:${HAVE_ROCM_SMI}>:HAVE_ROCM_SMI>
 )
 
 set_target_properties(fp64_monitor_tool PROPERTIES

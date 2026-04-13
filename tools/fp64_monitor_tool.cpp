@@ -806,6 +806,18 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     int mpi_rank = get_mpi_rank();
     bool is_rank0 = (mpi_rank <= 0);  // rank 0 or non-MPI (-1)
     
+    // Check if user requested ROCm SMI but it wasn't compiled in
+#ifndef HAVE_ROCM_SMI
+    if (g_state.config.use_rocm_smi) {
+        if (is_rank0) {
+            std::cerr << "[FP64 Monitor] Error: ROCm SMI support was not enabled at build time.\n"
+                      << "[FP64 Monitor] Rebuild with: cmake -DENABLE_ROCM_SMI=ON ..\n"
+                      << "[FP64 Monitor] Continuing without ROCm SMI memory monitoring.\n";
+        }
+        g_state.config.use_rocm_smi = false;
+    }
+#endif
+    
     // Determine actual file path to open (temp file if tmpdir is set)
     std::string file_to_open = output_filename;
     if (!output_filename.empty() && !g_state.config.tmpdir.empty()) {
