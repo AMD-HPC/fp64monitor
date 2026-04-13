@@ -8,8 +8,8 @@
 // HIP includes
 #include <hip/hip_runtime.h>
 
-// ROCm SMI - optional, only use if available
-#ifdef USE_ROCM_SMI
+// ROCm SMI - optional, only compiled in if ENABLE_ROCM_SMI=ON at build time
+#ifdef HAVE_ROCM_SMI
 #include <rocm_smi/rocm_smi.h>
 #endif
 
@@ -23,7 +23,7 @@ MemoryMonitor::MemoryMonitor() {
 }
 
 MemoryMonitor::~MemoryMonitor() {
-#ifdef USE_ROCM_SMI
+#ifdef HAVE_ROCM_SMI
     // Note: We intentionally don't call rsmi_shut_down() here.
     // When used as an ROCP_TOOL_LIBRARIES tool, the rocprofiler and HIP runtimes
     // may have already finalized by the time this destructor runs,
@@ -40,7 +40,7 @@ bool MemoryMonitor::initialize(int gpu_id, bool use_rocm_smi) {
     // Don't call hipSetDevice here - it may block if HIP isn't initialized yet
     // We'll do lazy initialization on first sample
     
-#ifdef USE_ROCM_SMI
+#ifdef HAVE_ROCM_SMI
     // Defer rsmi_init to first query to avoid initialization order issues
     // with ROCP_TOOL_LIBRARIES tools where other libraries may not be ready yet
     rsmi_device_index_ = static_cast<uint32_t>(gpu_id);
@@ -76,7 +76,7 @@ void MemoryMonitor::query_hip_memory(MemoryStats& stats) {
 }
 
 void MemoryMonitor::query_rsmi_memory(MemoryStats& stats) {
-#ifdef USE_ROCM_SMI
+#ifdef HAVE_ROCM_SMI
     // Lazy initialization of ROCm SMI
     if (!rsmi_initialized_ && use_rocm_smi_) {
         rsmi_status_t init_status = rsmi_init(0);
@@ -123,6 +123,7 @@ void MemoryMonitor::query_rsmi_memory(MemoryStats& stats) {
     
     stats.rsmi_valid = (stats.vram_total > 0);
 #else
+    (void)stats;  // Suppress unused parameter warning
     stats.rsmi_valid = false;
 #endif
 }
