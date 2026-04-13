@@ -22,11 +22,30 @@ add_executable(test_instruction_analyzer test_instruction_analyzer.cpp)
 target_link_libraries(test_instruction_analyzer PRIVATE measure_flops_lib)
 target_compile_options(test_instruction_analyzer PRIVATE -Wall -Wextra)
 
-# Direct MFMA test for GEMM analysis validation
+# Direct MFMA test for GEMM analysis validation (inline assembly)
 set_source_files_properties(test_mfma_direct.cpp PROPERTIES LANGUAGE HIP)
 add_executable(test_mfma_direct test_mfma_direct.cpp)
 set_target_properties(test_mfma_direct PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
 target_compile_options(test_mfma_direct PRIVATE -O3)
+
+# rocWMMA MFMA test for GEMM analysis validation (high-level API)
+# rocWMMA is a header-only library included with ROCm
+find_path(ROCWMMA_INCLUDE_DIR
+    NAMES rocwmma/rocwmma.hpp
+    HINTS ${ROCM_PATH}/include $ENV{ROCM_PATH}/include /opt/rocm/include
+)
+
+if(ROCWMMA_INCLUDE_DIR)
+    message(STATUS "Found rocWMMA: ${ROCWMMA_INCLUDE_DIR}")
+    set_source_files_properties(test_mfma_rocwmma.cpp PROPERTIES LANGUAGE HIP)
+    add_executable(test_mfma_rocwmma test_mfma_rocwmma.cpp)
+    set_target_properties(test_mfma_rocwmma PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
+    target_include_directories(test_mfma_rocwmma PRIVATE ${ROCWMMA_INCLUDE_DIR})
+    target_compile_options(test_mfma_rocwmma PRIVATE -O3)
+    install(TARGETS test_mfma_rocwmma DESTINATION bin)
+else()
+    message(STATUS "rocWMMA not found - skipping test_mfma_rocwmma")
+endif()
 
 # Install test programs
 install(TARGETS stream_triad_fp64 stream_triad_fp32 test_instruction_analyzer test_mfma_direct DESTINATION bin)
