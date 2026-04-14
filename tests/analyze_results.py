@@ -9,6 +9,12 @@ Usage:
 When multiple files are provided (e.g., from MPI runs), data is aggregated
 across all ranks and a single combined summary is reported.
 
+Deduplication:
+    When multiple processes on the same host monitor the same GPU, hardware
+    counters are shared (per-GPU, not per-process). The script automatically
+    deduplicates by (hostname, gpu_id), keeping only the lowest-ranked file
+    for each combination to avoid double-counting.
+
 Output:
     - Console: Aggregated summary
     - fp64_report.txt: Detailed report with per-rank statistics
@@ -21,10 +27,154 @@ Supports both:
 import sys
 import csv
 import glob
+import re
 import statistics
 from pathlib import Path
 from collections import defaultdict
 from io import StringIO
+
+
+def parse_filename_info(filename):
+    """
+    Parse hostname, GPU ID, and rank from filename.
+    
+    Expected formats:
+      - fp64_monitor_<hostname>_gpu<gpu_id>_rank<rank>.csv  (MPI mode)
+      - fp64_monitor_<hostname>_gpu<gpu_id>_pid<pid>.csv   (non-MPI mode)
+      - fp64_monitor_<rank>.csv                            (legacy MPI mode)
+      - fp64_monitor_<hostname>_<pid>.csv                  (legacy non-MPI mode)
+    
+    Returns: dict with 'hostname', 'gpu_id', 'rank' (or None if not found)
+    """
+    basename = Path(filename).stem  # Remove directory and extension
+    
+    # Try new format: fp64_monitor_<hostname>_gpu<gpu_id>_rank<rank>
+    match = re.match(r'fp64_monitor_(.+)_gpu(\d+)_rank(\d+)$', basename)
+    if match:
+        return {
+            'hostname': match.group(1),
+            'gpu_id': int(match.group(2)),
+            'rank': int(match.group(3)),
+            'filename': filename
+        }
+    
+    # Try new format with PID: fp64_monitor_<hostname>_gpu<gpu_id>_pid<pid>
+    match = re.match(r'fp64_monitor_(.+)_gpu(\d+)_pid(\d+)$', basename)
+    if match:
+        return {
+            'hostname': match.group(1),
+            'gpu_id': int(match.group(2)),
+            'rank': None,  # Non-MPI, use PID for uniqueness
+            'pid': int(match.group(3)),
+            'filename': filename
+        }
+    
+    # Try legacy MPI format: fp64_monitor_<rank>
+    match = re.match(r'fp64_monitor_(\d+)$', basename)
+    if match:
+        return {
+            'hostname': None,  # Unknown
+            'gpu_id': None,    # Unknown - will need to read from CSV
+            'rank': int(match.group(1)),
+            'filename': filename
+        }
+    
+    # Try legacy non-MPI format: fp64_monitor_<hostname>_<pid>
+    match = re.match(r'fp64_monitor_(.+)_(\d+)$', basename)
+    if match:
+        return {
+            'hostname': match.group(1),
+            'gpu_id': None,  # Unknown - will need to read from CSV
+            'rank': None,
+            'pid': int(match.group(2)),
+            'filename': filename
+        }
+    
+    # Unknown format - return minimal info
+    return {
+        'hostname': None,
+        'gpu_id': None,
+        'rank': None,
+        'filename': filename
+    }
+
+
+def get_gpu_id_from_csv(filename):
+    """Read GPU ID from the first data row of a CSV file."""
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                # First non-comment line is header
+                reader = csv.DictReader([line] + f.readlines())
+                for row in reader:
+                    gpu_id = row.get('gpu_id')
+                    if gpu_id is not None:
+                        return int(gpu_id)
+                    break
+    except Exception:
+        pass
+    return 0  # Default to GPU 0
+
+
+def deduplicate_files(filenames):
+    """
+    Deduplicate files to keep only one per (hostname, gpu_id) combination.
+    
+    When multiple processes on the same host monitor the same GPU, the hardware
+    counters are shared (not per-process). We should only include one file per
+    (hostname, gpu_id) to avoid double-counting.
+    
+    Returns: (deduplicated_files, excluded_files, dedup_info)
+    """
+    # Parse all filenames
+    file_info = []
+    for f in filenames:
+        info = parse_filename_info(f)
+        # If GPU ID not in filename, try to read from CSV
+        if info['gpu_id'] is None:
+            info['gpu_id'] = get_gpu_id_from_csv(f)
+        # If hostname not in filename, use 'unknown'
+        if info['hostname'] is None:
+            info['hostname'] = 'unknown'
+        file_info.append(info)
+    
+    # Group by (hostname, gpu_id)
+    groups = defaultdict(list)
+    for info in file_info:
+        key = (info['hostname'], info['gpu_id'])
+        groups[key].append(info)
+    
+    # For each group, keep the file with the lowest rank (or first if no rank)
+    deduplicated = []
+    excluded = []
+    dedup_info = []
+    
+    for (hostname, gpu_id), infos in sorted(groups.items()):
+        if len(infos) == 1:
+            # Only one file for this (hostname, gpu_id) - keep it
+            deduplicated.append(infos[0]['filename'])
+        else:
+            # Multiple files - keep the one with lowest rank
+            # Sort by rank (None ranks go to end)
+            sorted_infos = sorted(infos, key=lambda x: (x.get('rank') is None, x.get('rank', 0)))
+            kept = sorted_infos[0]
+            deduplicated.append(kept['filename'])
+            
+            # Track excluded files
+            for info in sorted_infos[1:]:
+                excluded.append(info['filename'])
+            
+            # Record deduplication info
+            dedup_info.append({
+                'hostname': hostname,
+                'gpu_id': gpu_id,
+                'kept': kept['filename'],
+                'excluded': [i['filename'] for i in sorted_infos[1:]]
+            })
+    
+    return deduplicated, excluded, dedup_info
 
 
 class DualWriter:
@@ -868,6 +1018,7 @@ def main():
         print("       analyze_results.py fp64_monitor_*.csv")
         print()
         print("When multiple files are provided, data is aggregated across all ranks.")
+        print("Files from the same (hostname, GPU) are deduplicated to avoid double-counting.")
         sys.exit(1)
     
     # Collect all input files (handle glob patterns)
@@ -892,7 +1043,31 @@ def main():
     fmt = detect_format(filenames[0])
     
     if fmt == 'fp64_monitor':
-        analyze_fp64_monitor_files(filenames)
+        # Deduplicate files by (hostname, gpu_id) to avoid double-counting
+        # when multiple processes on the same host monitor the same GPU
+        deduplicated, excluded, dedup_info = deduplicate_files(filenames)
+        
+        if excluded:
+            print("=" * 70)
+            print("File Deduplication")
+            print("=" * 70)
+            print()
+            print(f"Input files:       {len(filenames)}")
+            print(f"After dedup:       {len(deduplicated)}")
+            print(f"Excluded:          {len(excluded)}")
+            print()
+            print("Hardware counters are per-GPU, not per-process. When multiple")
+            print("processes monitor the same GPU, only one file is used per")
+            print("(hostname, GPU) to avoid double-counting.")
+            print()
+            for info in dedup_info:
+                print(f"  {info['hostname']} GPU {info['gpu_id']}:")
+                print(f"    Kept:     {Path(info['kept']).name}")
+                for ex in info['excluded']:
+                    print(f"    Excluded: {Path(ex).name}")
+            print()
+        
+        analyze_fp64_monitor_files(deduplicated)
     elif fmt == 'rocprofv3':
         if len(filenames) > 1:
             print("Warning: Multiple rocprofv3 files not yet supported, using first file")
