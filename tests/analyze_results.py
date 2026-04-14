@@ -741,6 +741,35 @@ def analyze_fp64_monitor_files(filenames):
                     p(f"  (Issue time = cycles to send addr/cmd, not full memory latency)")
                     p()
             
+            # SALU / Scalar Instructions (only if data present)
+            total_salu = sum_across_ranks('salu_total')
+            total_smem = sum_across_ranks('smem_total')
+            total_flat = sum_across_ranks('flat_total')
+            total_lds = sum_across_ranks('lds_total')
+            total_branch = sum_across_ranks('branch_total')
+            total_scalar = total_salu + total_smem
+            
+            if total_salu > 0 or total_smem > 0:
+                p("-" * 70)
+                p("Scalar & Memory Instructions (aggregated across all ranks)")
+                p("-" * 70)
+                p()
+                p(f"  SALU (Scalar ALU): {total_salu:>18,.0f}")
+                p(f"  SMEM (Scalar Mem): {total_smem:>18,.0f}")
+                p(f"  FLAT:              {total_flat:>18,.0f}")
+                p(f"  LDS:               {total_lds:>18,.0f}")
+                p(f"  Branch:            {total_branch:>18,.0f}")
+                p(f"  ----------------------------------------")
+                p(f"  Total SALU+SMEM:   {total_scalar:>18,.0f}")
+                p()
+                if total_insts > 0:
+                    p(f"SALU %% of Total:    {(total_salu / total_insts) * 100:>10.2f}%")
+                    p(f"SMEM %% of Total:    {(total_smem / total_insts) * 100:>10.2f}%")
+                    p(f"FLAT %% of Total:    {(total_flat / total_insts) * 100:>10.2f}%")
+                    p(f"LDS %% of Total:     {(total_lds / total_insts) * 100:>10.2f}%")
+                    p(f"Branch %% of Total:  {(total_branch / total_insts) * 100:>10.2f}%")
+                p()
+            
             # MFMA / GEMM Analysis
             total_mfma = sum_across_ranks('mfma_total')
             

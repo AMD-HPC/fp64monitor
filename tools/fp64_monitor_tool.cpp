@@ -509,6 +509,9 @@ bool configure_counters() {
         } else if (cs == "int") {
             counters = CounterSets::int_minimal();
             counter_set_name = "int";
+        } else if (cs == "salu") {
+            counters = CounterSets::salu_minimal();
+            counter_set_name = "salu";
         } else {
             counters = CounterSets::fp64_minimal();
         }

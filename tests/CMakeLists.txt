@@ -28,6 +28,12 @@ add_executable(test_mfma_direct test_mfma_direct.cpp)
 set_target_properties(test_mfma_direct PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
 target_compile_options(test_mfma_direct PRIVATE -O3)
 
+# SpMV test for FP64, FP32, and INT counter validation
+set_source_files_properties(test_spmv.cpp PROPERTIES LANGUAGE HIP)
+add_executable(test_spmv test_spmv.cpp)
+set_target_properties(test_spmv PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
+target_compile_options(test_spmv PRIVATE -O3)
+
 # rocWMMA MFMA test for GEMM analysis validation (high-level API)
 # rocWMMA is a header-only library included with ROCm
 find_path(ROCWMMA_INCLUDE_DIR
@@ -48,4 +54,4 @@ else()
 endif()
 
 # Install test programs
-install(TARGETS stream_triad_fp64 stream_triad_fp32 test_instruction_analyzer test_mfma_direct DESTINATION bin)
+install(TARGETS stream_triad_fp64 stream_triad_fp32 test_instruction_analyzer test_mfma_direct test_spmv DESTINATION bin)

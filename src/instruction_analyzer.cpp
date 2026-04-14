@@ -46,6 +46,8 @@ InstructionMix InstructionAnalyzer::analyze(const Sample& sample, bool aggregate
         mix.vmem_wr_cycles = sum_counter(sample, "SQ_INST_CYCLES_VMEM_WR");
         mix.smem_total = sum_counter(sample, "SQ_INSTS_SMEM");
         mix.lds_total = sum_counter(sample, "SQ_INSTS_LDS");
+        mix.flat_total = sum_counter(sample, "SQ_INSTS_FLAT");
+        mix.salu_total = sum_counter(sample, "SQ_INSTS_SALU");
         mix.branch_total = sum_counter(sample, "SQ_INSTS_BRANCH");
         mix.mfma_total = sum_counter(sample, "SQ_INSTS_MFMA");
 
@@ -114,6 +116,8 @@ InstructionMix InstructionAnalyzer::compute_delta(const InstructionMix& current,
     delta.vmem_wr_cycles = current.vmem_wr_cycles - previous.vmem_wr_cycles;
     delta.smem_total = current.smem_total - previous.smem_total;
     delta.lds_total = current.lds_total - previous.lds_total;
+    delta.flat_total = current.flat_total - previous.flat_total;
+    delta.salu_total = current.salu_total - previous.salu_total;
     delta.branch_total = current.branch_total - previous.branch_total;
     delta.mfma_total = current.mfma_total - previous.mfma_total;
 

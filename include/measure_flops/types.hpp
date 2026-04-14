@@ -85,6 +85,7 @@ struct InstructionMix {
     double vmem_wr_cycles;
     double smem_total;
     double lds_total;
+    double flat_total;
     double salu_total;
     double branch_total;
     double mfma_total;
@@ -140,6 +141,7 @@ struct InstructionMix {
           vmem_wr_cycles(0),
           smem_total(0),
           lds_total(0),
+          flat_total(0),
           salu_total(0),
           branch_total(0),
           mfma_total(0),
@@ -241,6 +243,19 @@ struct CounterSets {
             "SQ_INSTS_VMEM_WR",
             "SQ_INST_CYCLES_VMEM_RD",
             "SQ_INST_CYCLES_VMEM_WR"
+        };
+    }
+
+    // SALU + memory instruction counter set (7 counters)
+    static std::vector<std::string> salu_minimal() {
+        return {
+            "SQ_INSTS",
+            "SQ_INSTS_VALU",
+            "SQ_INSTS_SALU",
+            "SQ_INSTS_SMEM",
+            "SQ_INSTS_BRANCH",
+            "SQ_INSTS_FLAT",
+            "SQ_INSTS_LDS"
         };
     }
 
