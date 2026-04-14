@@ -145,12 +145,19 @@ std::string sanitize_path_component(const std::string& input) {
     return result;
 }
 
-// Get hostname (sanitized for safe use in filenames)
+// Get short hostname (sanitized for safe use in filenames)
+// Returns everything before the first '.' (e.g., "node01" from "node01.cluster.local")
 std::string get_hostname() {
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
         hostname[sizeof(hostname) - 1] = '\0';
-        return sanitize_path_component(std::string(hostname));
+        std::string full_hostname(hostname);
+        // Extract short hostname (before first '.')
+        size_t dot_pos = full_hostname.find('.');
+        if (dot_pos != std::string::npos) {
+            full_hostname = full_hostname.substr(0, dot_pos);
+        }
+        return sanitize_path_component(full_hostname);
     }
     return "unknown";
 }
@@ -317,9 +324,11 @@ bool copy_file(const std::string& src, const std::string& dst) {
 }
 
 // Generate default output filename
-// Uses MPI rank if available, otherwise hostname_pid
+// Generate default output filename with hostname, GPU ID, and rank/PID
+// Format: fp64_monitor_<hostname>_gpu<gpu_id>_rank<rank>.csv
+//     or: fp64_monitor_<hostname>_gpu<gpu_id>_pid<pid>.csv (if no MPI)
 // Files are placed in the output directory
-std::string generate_default_filename(const std::string& format) {
+std::string generate_default_filename(const std::string& format, int gpu_id) {
     std::string extension;
     if (format == "json") {
         extension = ".json";
@@ -330,13 +339,18 @@ std::string generate_default_filename(const std::string& format) {
     }
     
     std::string dir = get_output_directory();
+    std::string hostname = get_hostname();
     std::string basename;
     
     int mpi_rank = get_mpi_rank();
     if (mpi_rank >= 0) {
-        basename = "fp64_monitor_" + std::to_string(mpi_rank) + extension;
+        // MPI mode: fp64_monitor_<hostname>_gpu<gpu_id>_rank<rank>.csv
+        basename = "fp64_monitor_" + hostname + "_gpu" + std::to_string(gpu_id) 
+                 + "_rank" + std::to_string(mpi_rank) + extension;
     } else {
-        basename = "fp64_monitor_" + get_hostname() + "_" + std::to_string(getpid()) + extension;
+        // Non-MPI mode: fp64_monitor_<hostname>_gpu<gpu_id>_pid<pid>.csv
+        basename = "fp64_monitor_" + hostname + "_gpu" + std::to_string(gpu_id) 
+                 + "_pid" + std::to_string(getpid()) + extension;
     }
     
     if (dir.empty()) {
@@ -799,7 +813,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
         }
     } else {
         // Generate default unique filename
-        output_filename = generate_default_filename(output_format);
+        output_filename = generate_default_filename(output_format, gpu_id);
     }
     
     // Detect MPI rank early for controlling output
