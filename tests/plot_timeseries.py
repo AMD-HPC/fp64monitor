@@ -75,6 +75,12 @@ COUNTER_SETS = {
         'labels': ['INT32', 'INT64', 'VMEM Read', 'VMEM Write'],
         'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'],
     },
+    'salu': {
+        'name': 'SALU + Memory',
+        'columns': ['salu_total', 'smem_total', 'flat_total', 'lds_total', 'branch_total'],
+        'labels': ['SALU', 'SMEM', 'FLAT', 'LDS', 'Branch'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+    },
 }
 
 
@@ -576,7 +582,7 @@ def main():
     parser.add_argument('--output', '-o', help='Output filename prefix (default: fp64_monitor)')
     parser.add_argument('--html', action='store_true', 
                         help='Generate interactive HTML using plotly (default: PDF using matplotlib)')
-    parser.add_argument('--counters', '-c', choices=['fp64', 'fp32', 'int', 'auto'],
+    parser.add_argument('--counters', '-c', choices=['fp64', 'fp32', 'int', 'salu', 'auto'],
                         help='Counter set to plot (default: fp64, use "auto" to detect)')
     
     args = parser.parse_args()
