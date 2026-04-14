@@ -47,6 +47,12 @@ COUNTER_MAP = {
     # VMEM counters
     'vmem_rd': 'SQ_INSTS_VMEM_RD',
     'vmem_wr': 'SQ_INSTS_VMEM_WR',
+    # SALU counters
+    'salu_total': 'SQ_INSTS_SALU',
+    'smem_total': 'SQ_INSTS_SMEM',
+    'branch_total': 'SQ_INSTS_BRANCH',
+    'flat_total': 'SQ_INSTS_FLAT',
+    'lds_total': 'SQ_INSTS_LDS',
     # MFMA
     'mfma_total': 'SQ_INSTS_MFMA',
 }
