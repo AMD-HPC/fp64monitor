@@ -954,13 +954,14 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     g_state.agent_id = gpus[gpu_id].id;
     
     // Log initialization info (verbose mode, rank 0 only)
-    if (g_state.config.verbose && is_rank0) {
+    if (g_state.config.verbose) {
         std::cerr << "[FP64 Monitor] Initializing for GPU " << gpu_id
                   << " (" << gpus[gpu_id].name << ")";
-        if (mpi_rank >= 0) {
-            std::cerr << ", MPI rank " << mpi_rank;
-        }
+        std::cerr << ", MPI rank " << mpi_rank;
         std::cerr << "\n";
+    }
+    // Log initialization info (verbose mode, rank 0 only)
+    if (g_state.config.verbose && is_rank0) {
         std::cerr << "[FP64 Monitor] Output format: " << output_format << "\n";
     }
     

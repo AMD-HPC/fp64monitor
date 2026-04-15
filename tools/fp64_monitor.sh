@@ -213,7 +213,7 @@ fi
 # Suppress rocprofiler-sdk SYS_PERFMON warnings if --quiet is set
 # GLOG_minloglevel: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
 if [ "${FP64_MONITOR_QUIET}" = "1" ]; then
-    export GLOG_minloglevel=2
+    export GLOG_minloglevel=3
 fi
 
 # Run the application
