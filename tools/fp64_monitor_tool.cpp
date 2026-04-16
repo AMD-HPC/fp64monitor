@@ -513,6 +513,12 @@ bool configure_counters() {
         } else if (cs == "salu") {
             counters = CounterSets::salu_minimal();
             counter_set_name = "salu";
+        } else if (cs == "highlevel") {
+            counters = CounterSets::highlevel();
+            counter_set_name = "highlevel";
+        } else if (cs == "highlevel2") {
+            counters = CounterSets::highlevel2();
+            counter_set_name = "highlevel2";
         } else {
             counters = CounterSets::fp64_minimal();
         }

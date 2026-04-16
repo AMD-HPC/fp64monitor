@@ -89,6 +89,10 @@ struct InstructionMix {
     double salu_total;
     double branch_total;
     double mfma_total;
+    double gds_total;
+    double exp_gds_total;
+    double sendmsg_total;
+    double vskipped_total;
 
     // Computed percentages
     double fp64_valu_pct;     // FP64 VALU as % of total VALU
@@ -145,6 +149,10 @@ struct InstructionMix {
           salu_total(0),
           branch_total(0),
           mfma_total(0),
+          gds_total(0),
+          exp_gds_total(0),
+          sendmsg_total(0),
+          vskipped_total(0),
           fp64_valu_pct(0),
           fp64_total_pct(0),
           fp64_compute_pct(0),
@@ -257,6 +265,32 @@ struct CounterSets {
             "SQ_INSTS_BRANCH",
             "SQ_INSTS_FLAT",
             "SQ_INSTS_LDS"
+        };
+    }
+
+    // High-level instruction mix (8 counters - covers all major instruction categories)
+    static std::vector<std::string> highlevel() {
+        return {
+            "SQ_INSTS",         // Total instructions
+            "SQ_INSTS_VALU",    // Vector ALU (FP, INT, transcendental, shifts, etc.)
+            "SQ_INSTS_SALU",    // Scalar ALU (address calc, literals, uniform ops)
+            "SQ_INSTS_VMEM",    // Vector memory (global, private, texture)
+            "SQ_INSTS_SMEM",    // Scalar memory (kernel args, __constant__)
+            "SQ_INSTS_LDS",     // Local/shared memory
+            "SQ_INSTS_BRANCH",  // Branch/jump operations
+            "SQ_INSTS_MFMA"     // Matrix fused multiply-add
+        };
+    }
+
+    // High-level instruction set 2 (6 counters - less common instruction types)
+    static std::vector<std::string> highlevel2() {
+        return {
+            "SQ_INSTS",         // Total instructions (for reference)
+            "SQ_INSTS_FLAT",    // Flat memory (unified address space)
+            "SQ_INSTS_GDS",     // Global Data Share
+            "SQ_INSTS_EXP_GDS", // Export to GDS
+            "SQ_INSTS_SENDMSG", // Send message (signaling)
+            "SQ_INSTS_VSKIPPED" // Skipped due to exec mask
         };
     }
 
