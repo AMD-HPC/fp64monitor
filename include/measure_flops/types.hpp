@@ -165,6 +165,7 @@ struct MonitorConfig {
     bool list_counters{false};           // List available counters and exit
     bool list_gpus{false};               // List available GPUs and exit
     bool use_rocm_smi{false};
+    bool enable_memory_monitor{true};    // Enable HIP/ROCm-SMI memory tracking (can cause race conditions)
     std::string tmpdir;                  // Fast local storage for temp output (e.g., /dev/shm)
 };
 

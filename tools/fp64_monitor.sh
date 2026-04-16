@@ -18,6 +18,7 @@
 #   --preload             Wrap main function to prevent possible shutdown race condition
 #   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
 #   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
+#   --no-memory           Disable memory tracking (avoids hipInit race condition)
 #   --no-analyze          Disable auto-analysis after run
 #   --verbose             Enable verbose output
 #   --help                Show this help message
@@ -32,6 +33,7 @@
 #   FP64_MONITOR_USE_ROCMSMI   - Set to 1 to enable rocm-smi memory monitoring
 #   FP64_MONITOR_PRELOAD       - Set to 1 to enable LD_PRELOAD wrapper
 #   FP64_MONITOR_QUIET         - Set to 1 to suppress rocprofiler SYS_PERFMON warnings
+#   FP64_MONITOR_MEMORY        - Set to 0 to disable memory tracking (default: 1)
 #   FP64_MONITOR_ANALYZE       - Set to 0 to disable auto-analysis (default: 1)
 #   FP64_MONITOR_VERBOSE       - Set to 1 for verbose output
 #
@@ -54,6 +56,7 @@ Options:
   --preload             Wrap main function to prevent possible shutdown race condition
   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
+  --no-memory           Disable memory tracking (avoids hipInit race condition)
   --no-analyze          Disable auto-analysis after run
   --verbose             Enable verbose output
   --help                Show this help message
@@ -109,6 +112,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --quiet)
             export FP64_MONITOR_QUIET=1
+            shift
+            ;;
+        --no-memory)
+            export FP64_MONITOR_MEMORY=0
             shift
             ;;
         --no-analyze)
