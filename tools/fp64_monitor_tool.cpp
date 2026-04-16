@@ -18,6 +18,7 @@
 //   FP64_MONITOR_TMPDIR    - Write to fast local storage (e.g., /dev/shm), copy
 //                            to final location at exit (reduces I/O on parallel FS)
 //   FP64_MONITOR_USE_ROCMSMI - Set to 1 to enable rocm-smi memory monitoring
+//   FP64_MONITOR_MEMORY    - Set to 0 to disable memory tracking (avoids hipInit race)
 
 #include "measure_flops/counter_sampler.hpp"
 #include "measure_flops/instruction_analyzer.hpp"
@@ -799,6 +800,9 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     if (const char* usesmi = std::getenv("FP64_MONITOR_USE_ROCMSMI")) {
         g_state.config.use_rocm_smi = (safe_strtol(usesmi, 0, 0, 1) != 0);
     }
+    if (const char* mem = std::getenv("FP64_MONITOR_MEMORY")) {
+        g_state.config.enable_memory_monitor = (safe_strtol(mem, 1, 0, 1) != 0);
+    }
     if (const char* tmpdir = std::getenv("FP64_MONITOR_TMPDIR")) {
         g_state.config.tmpdir = tmpdir;
     }
@@ -965,14 +969,18 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
         std::cerr << "[FP64 Monitor] Output format: " << output_format << "\n";
     }
     
-    // Initialize memory monitor
-    if (!g_state.memory_monitor.initialize(gpu_id, g_state.config.use_rocm_smi)) {
-        if (g_state.config.verbose && is_rank0) {
-            std::cerr << "[FP64 Monitor] Warning: Memory monitoring initialization failed: "
-                      << g_state.memory_monitor.get_last_error() << "\n";
+    // Initialize memory monitor (skip if disabled to avoid hipInit race condition)
+    if (g_state.config.enable_memory_monitor) {
+        if (!g_state.memory_monitor.initialize(gpu_id, g_state.config.use_rocm_smi)) {
+            if (g_state.config.verbose && is_rank0) {
+                std::cerr << "[FP64 Monitor] Warning: Memory monitoring initialization failed: "
+                          << g_state.memory_monitor.get_last_error() << "\n";
+            }
+        } else if (g_state.config.verbose && is_rank0) {
+            std::cerr << "[FP64 Monitor] Memory monitoring enabled\n";
         }
     } else if (g_state.config.verbose && is_rank0) {
-        std::cerr << "[FP64 Monitor] Memory monitoring enabled\n";
+        std::cerr << "[FP64 Monitor] Memory monitoring disabled (FP64_MONITOR_MEMORY=0)\n";
     }
     
     // Populate counter map
