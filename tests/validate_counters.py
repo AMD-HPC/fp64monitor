@@ -45,6 +45,7 @@ COUNTER_MAP = {
     'int32_total': 'SQ_INSTS_VALU_INT32',
     'int64_total': 'SQ_INSTS_VALU_INT64',
     # VMEM counters
+    'vmem_total': 'SQ_INSTS_VMEM',
     'vmem_rd': 'SQ_INSTS_VMEM_RD',
     'vmem_wr': 'SQ_INSTS_VMEM_WR',
     # SALU counters
@@ -55,6 +56,11 @@ COUNTER_MAP = {
     'lds_total': 'SQ_INSTS_LDS',
     # MFMA
     'mfma_total': 'SQ_INSTS_MFMA',
+    # Other instruction types
+    'gds_total': 'SQ_INSTS_GDS',
+    'exp_gds_total': 'SQ_INSTS_EXP_GDS',
+    'sendmsg_total': 'SQ_INSTS_SENDMSG',
+    'vskipped_total': 'SQ_INSTS_VSKIPPED',
 }
 
 # Reverse mapping for display

@@ -81,6 +81,18 @@ COUNTER_SETS = {
         'labels': ['SALU', 'SMEM', 'FLAT', 'LDS', 'Branch'],
         'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
     },
+    'highlevel': {
+        'name': 'High-Level Instruction Mix',
+        'columns': ['valu_instructions', 'salu_total', 'vmem_total', 'smem_total', 'lds_total', 'branch_total', 'mfma_total'],
+        'labels': ['VALU', 'SALU', 'VMEM', 'SMEM', 'LDS', 'Branch', 'MFMA'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2'],
+    },
+    'highlevel2': {
+        'name': 'Other Instruction Types',
+        'columns': ['flat_total', 'gds_total', 'exp_gds_total', 'sendmsg_total', 'vskipped_total'],
+        'labels': ['FLAT', 'GDS', 'EXP_GDS', 'SENDMSG', 'VSKIPPED'],
+        'colors': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+    },
 }
 
 
@@ -182,7 +194,7 @@ def compute_deltas(rows, counter_set='fp64'):
 def load_and_aggregate(csv_files, counter_set='fp64'):
     """Load data from multiple CSV files and aggregate by sample period.
     
-    Returns aggregated data with min/max for variability bands.
+    Returns aggregated data (averages across ranks) with min/max for variability bands.
     """
     set_info = COUNTER_SETS[counter_set]
     columns = set_info['columns']
@@ -198,12 +210,10 @@ def load_and_aggregate(csv_files, counter_set='fp64'):
     if not all_deltas:
         return []
     
-    num_ranks = len(all_deltas)
-    
     # Find the maximum number of samples across all files
     max_samples = max(len(d) for d in all_deltas)
     
-    # Aggregate by sample_id (sum across all ranks, track min/max per rank)
+    # Aggregate by sample_id (average across all ranks, track min/max per rank)
     aggregated = []
     for i in range(max_samples):
         # Collect per-rank values for this sample period
@@ -233,11 +243,18 @@ def load_and_aggregate(csv_files, counter_set='fp64'):
                 count += 1
         
         if count > 0:
-            # Store min/max across ranks (scaled to total by multiplying by num_ranks)
-            agg['total_insts_min'] = min(rank_total_insts) * num_ranks if rank_total_insts else 0
-            agg['total_insts_max'] = max(rank_total_insts) * num_ranks if rank_total_insts else 0
-            agg['valu_insts_min'] = min(rank_valu_insts) * num_ranks if rank_valu_insts else 0
-            agg['valu_insts_max'] = max(rank_valu_insts) * num_ranks if rank_valu_insts else 0
+            # Convert sums to averages
+            if count > 1:
+                agg['total_instructions'] /= count
+                agg['valu_instructions'] /= count
+                for col in columns:
+                    agg[col] /= count
+            
+            # Store min/max across ranks (actual per-rank values, not scaled)
+            agg['total_insts_min'] = min(rank_total_insts) if rank_total_insts else 0
+            agg['total_insts_max'] = max(rank_total_insts) if rank_total_insts else 0
+            agg['valu_insts_min'] = min(rank_valu_insts) if rank_valu_insts else 0
+            agg['valu_insts_max'] = max(rank_valu_insts) if rank_valu_insts else 0
             aggregated.append(agg)
     
     return aggregated
@@ -298,7 +315,7 @@ def plot_raw_counts(ax, deltas, counter_set='fp64'):
 
 
 def plot_percentage(ax, deltas, counter_set='fp64'):
-    """Plot counter components as percentage of VALU."""
+    """Plot counter components as percentage of VALU (or Total for highlevel sets)."""
     if not deltas:
         return
     
@@ -308,16 +325,20 @@ def plot_percentage(ax, deltas, counter_set='fp64'):
     colors = set_info['colors']
     set_name = set_info['name']
     
+    # For highlevel sets, use total_instructions as denominator
+    use_total = counter_set in ('highlevel', 'highlevel2')
+    denom_label = 'Total' if use_total else 'VALU'
+    
     x = [d['sample_id'] for d in deltas]
     
     # Compute percentages (handle division by zero)
     pct_data = [[] for _ in columns]
     
     for d in deltas:
-        valu = d['valu_instructions']
+        denom = d['total_instructions'] if use_total else d['valu_instructions']
         for i, col in enumerate(columns):
-            if valu > 0:
-                pct_data[i].append(100.0 * d[col] / valu)
+            if denom > 0:
+                pct_data[i].append(100.0 * d[col] / denom)
             else:
                 pct_data[i].append(0)
     
@@ -325,8 +346,8 @@ def plot_percentage(ax, deltas, counter_set='fp64'):
     ax.stackplot(x, *pct_data, labels=labels, colors=colors, alpha=0.7)
     
     ax.set_xlabel('Sample Period')
-    ax.set_ylabel('Percentage of VALU (%)')
-    ax.set_title(f'{set_name} Instruction Mix Over Time (% of VALU)')
+    ax.set_ylabel(f'Percentage of {denom_label} (%)')
+    ax.set_title(f'{set_name} Instruction Mix Over Time (% of {denom_label})')
     ax.legend(loc='upper left', fontsize='small')
     ax.grid(True, alpha=0.3)
     ax.set_ylim(0, 100)
@@ -454,13 +475,17 @@ def generate_html_plots(csv_files, output_prefix=None, counter_set=None):
         valu_min = [d['valu_insts_min'] for d in deltas]
         valu_max = [d['valu_insts_max'] for d in deltas]
     
+    # For highlevel sets, use total_instructions as denominator
+    use_total = counter_set in ('highlevel', 'highlevel2')
+    denom_label = 'Total' if use_total else 'VALU'
+    
     # Compute percentages
     pct_data = {col: [] for col in columns}
     for d in deltas:
-        valu = d['valu_instructions']
+        denom = d['total_instructions'] if use_total else d['valu_instructions']
         for col in columns:
-            if valu > 0:
-                pct_data[col].append(100.0 * d[col] / valu)
+            if denom > 0:
+                pct_data[col].append(100.0 * d[col] / denom)
             else:
                 pct_data[col].append(0)
     
@@ -469,7 +494,7 @@ def generate_html_plots(csv_files, output_prefix=None, counter_set=None):
         rows=2, cols=1,
         subplot_titles=(
             f'Instruction Mix Over Time (Raw Counts) - {set_name}',
-            f'{set_name} Instruction Mix Over Time (% of VALU)'
+            f'{set_name} Instruction Mix Over Time (% of {denom_label})'
         ),
         vertical_spacing=0.12
     )
@@ -565,7 +590,7 @@ def generate_html_plots(csv_files, output_prefix=None, counter_set=None):
     fig.update_xaxes(title_text='Sample Period', row=1, col=1)
     fig.update_xaxes(title_text='Sample Period', row=2, col=1)
     fig.update_yaxes(title_text='Instruction Count', row=1, col=1)
-    fig.update_yaxes(title_text='Percentage of VALU (%)', range=[0, 100], row=2, col=1)
+    fig.update_yaxes(title_text=f'Percentage of {denom_label} (%)', range=[0, 100], row=2, col=1)
     
     # Save to HTML
     fig.write_html(output_file, include_plotlyjs=True, full_html=True)
@@ -582,7 +607,7 @@ def main():
     parser.add_argument('--output', '-o', help='Output filename prefix (default: fp64_monitor)')
     parser.add_argument('--html', action='store_true', 
                         help='Generate interactive HTML using plotly (default: PDF using matplotlib)')
-    parser.add_argument('--counters', '-c', choices=['fp64', 'fp32', 'int', 'salu', 'auto'],
+    parser.add_argument('--counters', '-c', choices=['fp64', 'fp32', 'int', 'salu', 'highlevel', 'highlevel2', 'auto'],
                         help='Counter set to plot (default: fp64, use "auto" to detect)')
     
     args = parser.parse_args()

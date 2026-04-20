@@ -50,6 +50,10 @@ InstructionMix InstructionAnalyzer::analyze(const Sample& sample, bool aggregate
         mix.salu_total = sum_counter(sample, "SQ_INSTS_SALU");
         mix.branch_total = sum_counter(sample, "SQ_INSTS_BRANCH");
         mix.mfma_total = sum_counter(sample, "SQ_INSTS_MFMA");
+        mix.gds_total = sum_counter(sample, "SQ_INSTS_GDS");
+        mix.exp_gds_total = sum_counter(sample, "SQ_INSTS_EXP_GDS");
+        mix.sendmsg_total = sum_counter(sample, "SQ_INSTS_SENDMSG");
+        mix.vskipped_total = sum_counter(sample, "SQ_INSTS_VSKIPPED");
 
         // FP64
         mix.fp64_add = sum_counter(sample, "SQ_INSTS_VALU_ADD_F64");
@@ -120,6 +124,10 @@ InstructionMix InstructionAnalyzer::compute_delta(const InstructionMix& current,
     delta.salu_total = current.salu_total - previous.salu_total;
     delta.branch_total = current.branch_total - previous.branch_total;
     delta.mfma_total = current.mfma_total - previous.mfma_total;
+    delta.gds_total = current.gds_total - previous.gds_total;
+    delta.exp_gds_total = current.exp_gds_total - previous.exp_gds_total;
+    delta.sendmsg_total = current.sendmsg_total - previous.sendmsg_total;
+    delta.vskipped_total = current.vskipped_total - previous.vskipped_total;
 
     delta.fp64_add = current.fp64_add - previous.fp64_add;
     delta.fp64_mul = current.fp64_mul - previous.fp64_mul;

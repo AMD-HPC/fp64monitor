@@ -103,7 +103,7 @@ void CsvFormatter::write_header(std::ostream& os, const MonitorConfig& config) {
     (void)config;  // Not used in CSV header
     
     os << "sample_id,elapsed_seconds,gpu_id,"
-       << "total_instructions,valu_instructions,salu_total,smem_total,vmem_total,vmem_rd,vmem_wr,vmem_rd_cycles,vmem_wr_cycles,lds_total,flat_total,"
+       << "total_instructions,valu_instructions,salu_total,smem_total,vmem_total,vmem_rd,vmem_wr,vmem_rd_cycles,vmem_wr_cycles,lds_total,flat_total,gds_total,exp_gds_total,sendmsg_total,vskipped_total,"
        << "fp64_add,fp64_mul,fp64_fma,fp64_trans,fp64_mfma,"
        << "fp32_add,fp32_mul,fp32_fma,fp32_trans,fp32_mfma,"
        << "fp16_total,bf16_mfma,int8_mfma,int32_total,int64_total,"
@@ -145,6 +145,10 @@ void CsvFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
        << static_cast<int64_t>(mix.vmem_wr_cycles) << ","
        << static_cast<int64_t>(mix.lds_total) << ","
        << static_cast<int64_t>(mix.flat_total) << ","
+       << static_cast<int64_t>(mix.gds_total) << ","
+       << static_cast<int64_t>(mix.exp_gds_total) << ","
+       << static_cast<int64_t>(mix.sendmsg_total) << ","
+       << static_cast<int64_t>(mix.vskipped_total) << ","
        << static_cast<int64_t>(mix.fp64_add) << ","
        << static_cast<int64_t>(mix.fp64_mul) << ","
        << static_cast<int64_t>(mix.fp64_fma) << ","
