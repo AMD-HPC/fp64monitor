@@ -16,7 +16,7 @@
 #   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
 #   --use-rocmsmi         Enable rocm-smi memory monitoring
 #   --preload             Wrap main function to prevent possible shutdown race condition
-#   --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
+#   --counters TYPE       Counter set: fp64 (default), fp32, fp16, int, salu
 #   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
 #   --no-memory           Disable memory tracking (avoids hipInit race condition)
 #   --no-analyze          Disable auto-analysis after run
@@ -54,7 +54,7 @@ Options:
   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
   --use-rocmsmi         Enable rocm-smi memory monitoring
   --preload             Wrap main function to prevent possible shutdown race condition
-  --counters TYPE       Counter set: fp64 (default), fp32, fp16, or int
+  --counters TYPE       Counter set: fp64 (default), fp32, fp16, int or salu
   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
   --no-memory           Disable memory tracking (avoids hipInit race condition)
   --no-analyze          Disable auto-analysis after run
