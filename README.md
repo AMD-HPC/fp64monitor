@@ -1,19 +1,17 @@
 # FP64 GPU Monitor
 
-A C++ utility to monitor FP64 (double-precision) instruction usage on AMD GPUs using the rocprofiler-sdk library.
+A C++ utility to monitor GPU instruction usage on AMD GPUs using the rocprofiler-sdk library. While named for FP64 monitoring, it supports multiple counter sets for analyzing different aspects of GPU workloads.
 
 ## Features
 
 - Periodic hardware counter sampling for HIP applications
-- FP64 instruction percentage analysis
+- Multiple counter sets: FP64, FP32, FP16, INT, SALU, and high-level instruction mix
 - Multiple output formats: text, CSV, JSON
-- Summary statistics (average, min, max FP64 percentages)
 - Works via ROCP_TOOL_LIBRARIES for any HIP application
 - MPI-aware output file naming (auto-detects rank)
 - Build-time ROCm version recording
 - Memory monitoring (GPU and CPU):
-  - GPU memory usage via HIP API
-  - Detailed VRAM/GTT breakdown via ROCm SMI (optional)
+  - Detailed VRAM/GTT breakdown via AMD SMI
   - CPU resident and virtual memory via /proc/self/statm
   - High water mark tracking for peak memory usage
 
@@ -61,15 +59,15 @@ make -j$(nproc)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `ENABLE_ROCM_SMI` | OFF | Enable ROCm SMI memory monitoring (requires librocm_smi64) |
+| `ENABLE_AMD_SMI` | ON | Enable AMD SMI memory monitoring (requires libamd_smi) |
 | `BUILD_TESTS` | ON | Build test programs |
 
-Example with ROCm SMI support:
+Example without AMD SMI support:
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_ROCM_SMI=ON
+cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_AMD_SMI=OFF
 ```
 
-**Note**: If `--use-rocmsmi` is requested at runtime but the tool was built without ROCm SMI support, an error message will be displayed and the tool will continue without ROCm SMI features.
+**Note**: If `--use-amdsmi` is requested at runtime but the tool was built without AMD SMI support, an error message will be displayed and the tool will continue without memory monitoring features.
 
 ## Usage
 
@@ -84,8 +82,11 @@ fp64_monitor.sh -- ./your_hip_app [args...]
 # With options
 fp64_monitor.sh --interval 500 --verbose -- ./your_app arg1 arg2
 
-# MPI applications
-mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
+# MPI applications with memory monitoring
+mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./my_mpi_app
+
+# High-level instruction mix analysis
+fp64_monitor.sh --counters highlevel --use-amdsmi -- ./my_app
 ```
 
 #### Wrapper Script Options
@@ -98,13 +99,13 @@ mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
 | `--dir DIR` | Output directory (default: fp64_monitor_output) |
 | `--gpu ID` | GPU ID to monitor (default: 0) |
 | `--tmpdir DIR` | Fast local storage for temp output (e.g., /dev/shm) |
-| `--use-rocmsmi` | Enable rocm-smi memory monitoring |
-| `--preload` | Wrap main function to prevent possible shutdown race condition |
-| `--counters TYPE` | Counter set: fp64 (default), fp32, fp16, or int |
-| `--quiet` | Suppress rocprofiler-sdk SYS_PERFMON warnings |
+| `--use-amdsmi` | Enable AMD SMI memory monitoring (VRAM/GTT) |
+| `--preload` | Wrap main function for clean shutdown (auto-enabled with --use-amdsmi) |
+| `--counters TYPE` | Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2 |
 | `--no-analyze` | Disable auto-analysis after run |
-| `--verbose` | Enable verbose output |
-| `--help` | Show help message |
+| `--verbose` | Enable verbose output and rocprofiler-sdk logging |
+| `--help` | Show brief help message |
+| `--fullhelp` | Show detailed help with counter descriptions and examples |
 
 ### Tool Library (Direct)
 
@@ -124,10 +125,9 @@ ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
 | `FP64_MONITOR_FORMAT` | csv | Output format: text, csv, json |
 | `FP64_MONITOR_DIR` | fp64_monitor_output | Output directory |
 | `FP64_MONITOR_TMPDIR` | (none) | Fast local storage for temp files (e.g., /dev/shm) |
-| `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, or int |
-| `FP64_MONITOR_USE_ROCMSMI` | 0 | Enable rocm-smi memory monitoring (1=enabled) |
+| `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2 |
+| `FP64_MONITOR_USE_AMDSMI` | 0 | Enable AMD SMI memory monitoring (1=enabled) |
 | `FP64_MONITOR_PRELOAD` | 0 | Enable LD_PRELOAD wrapper for clean shutdown (1=enabled) |
-| `FP64_MONITOR_QUIET` | 0 | Suppress rocprofiler-sdk SYS_PERFMON warnings (1=enabled) |
 | `FP64_MONITOR_ANALYZE` | 1 | Auto-analyze results after run (0=disabled) |
 | `FP64_MONITOR_VERBOSE` | 0 | Verbose output (1=enabled) |
 
@@ -246,7 +246,7 @@ sample_id,elapsed_seconds,gpu_id,total_instructions,valu_instructions,...,fp64_v
 
 ## Counter Sets
 
-The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64_MONITOR_COUNTERS`:
+The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64_MONITOR_COUNTERS`. Hardware limits restrict simultaneous counter collection to ~8 SQ-block counters, which is why different counter sets exist.
 
 ### FP64 Counters (default)
 
@@ -258,8 +258,8 @@ The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64
 | `SQ_INSTS_VALU_MUL_F64` | FP64 Multiply |
 | `SQ_INSTS_VALU_FMA_F64` | FP64 FMA |
 | `SQ_INSTS_VALU_TRANS_F64` | FP64 Transcendental |
-| `SQ_INSTS_VALU_MFMA_F64` | FP64 Matrix FMA |
 | `SQ_INSTS_MFMA` | Total MFMA instructions |
+| `SQ_INSTS_MFMA_MOPS_F64` | FP64 Matrix FMA operations |
 
 ### FP32 Counters (`--counters fp32`)
 
@@ -272,7 +272,7 @@ The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64
 | `SQ_INSTS_VALU_MUL_F32` | FP32 Multiply |
 | `SQ_INSTS_VALU_FMA_F32` | FP32 FMA |
 | `SQ_INSTS_VALU_TRANS_F32` | FP32 Transcendental |
-| `SQ_INSTS_VALU_MFMA_F32` | FP32 Matrix FMA |
+| `SQ_INSTS_MFMA_MOPS_F32` | FP32 Matrix FMA operations |
 
 ### FP16 Counters (`--counters fp16`)
 
@@ -284,10 +284,10 @@ The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64
 | `SQ_INSTS_VALU_ADD_F16` | FP16 ADD/SUB |
 | `SQ_INSTS_VALU_MUL_F16` | FP16 Multiply |
 | `SQ_INSTS_VALU_FMA_F16` | FP16 FMA |
-| `SQ_INSTS_VALU_MFMA_F16` | FP16 Matrix FMA |
-| `SQ_INSTS_VALU_MFMA_BF16` | BF16 Matrix FMA |
+| `SQ_INSTS_MFMA_MOPS_F16` | FP16 Matrix FMA operations |
+| `SQ_INSTS_MFMA_MOPS_BF16` | BF16 Matrix FMA operations |
 
-### Integer + VMEM Counters (`--counters int`)
+### Integer Counters (`--counters int`)
 
 | Counter | Description |
 |---------|-------------|
@@ -295,12 +295,47 @@ The tool supports multiple counter sets, selected via `--counters TYPE` or `FP64
 | `SQ_INSTS_VALU` | Total VALU instructions |
 | `SQ_INSTS_VALU_INT32` | 32-bit integer VALU |
 | `SQ_INSTS_VALU_INT64` | 64-bit integer VALU |
-| `SQ_INSTS_VMEM_RD` | Vector memory reads |
-| `SQ_INSTS_VMEM_WR` | Vector memory writes |
-| `SQ_INST_CYCLES_VMEM_RD` | VMEM read issue cycles |
-| `SQ_INST_CYCLES_VMEM_WR` | VMEM write issue cycles |
+| `SQ_INSTS_MFMA` | Total MFMA instructions |
+| `SQ_INSTS_MFMA_MOPS_I8` | INT8 Matrix FMA operations |
 
-**Note**: Counter values are per-wavefront (64 threads), not per-thread. Hardware limits restrict simultaneous counter collection to ~8 SQ-block counters, which is why different counter sets exist.
+### SALU Counters (`--counters salu`)
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_SALU` | Scalar ALU instructions |
+| `SQ_INSTS_SMEM` | Scalar memory instructions |
+| `SQ_INSTS_FLAT` | Flat memory instructions |
+| `SQ_INSTS_LDS` | Local data share instructions |
+| `SQ_INSTS_BRANCH` | Branch instructions |
+
+### High-Level Instruction Mix (`--counters highlevel`)
+
+Provides a broad overview of instruction categories:
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_VALU` | Vector ALU instructions |
+| `SQ_INSTS_SALU` | Scalar ALU instructions |
+| `SQ_INSTS_VMEM` | Vector memory instructions |
+| `SQ_INSTS_SMEM` | Scalar memory instructions |
+| `SQ_INSTS_LDS` | Local data share instructions |
+| `SQ_INSTS_BRANCH` | Branch instructions |
+| `SQ_INSTS_MFMA` | Matrix FMA instructions |
+
+### Other Instruction Types (`--counters highlevel2`)
+
+| Counter | Description |
+|---------|-------------|
+| `SQ_INSTS` | Total instructions |
+| `SQ_INSTS_FLAT` | Flat memory instructions |
+| `SQ_INSTS_GDS` | Global data share instructions |
+| `SQ_INSTS_EXP_GDS` | Export GDS instructions |
+| `SQ_INSTS_SENDMSG` | Send message instructions |
+| `SQ_INSTS_VSKIPPED` | Skipped VALU instructions |
+
+**Note**: Counter values are per-wavefront (64 threads), not per-thread.
 
 ## Analysis Tools
 
@@ -314,26 +349,24 @@ python3 analyze_results.py fp64_monitor_output/fp64_monitor_*.csv
 ```
 
 Features:
+- Auto-detects counter set from CSV data
 - Aggregates data across multiple MPI ranks
-- Reports total instruction counts and FP64 percentages
-- VMEM read/write statistics and issue latencies (when using `--counters int`)
+- Reports instruction counts specific to the counter set used
+- Memory high-water marks (VRAM, GTT, CPU) when available
 
 ### plot_timeseries.py
 
 Generates time-series visualizations of the instruction mix over time.
 
 ```bash
-# Generate PDF charts (default: FP64 counter set)
+# Generate PDF charts (auto-detects counter set)
 python3 plot_timeseries.py fp64_monitor_output/fp64_monitor_*.csv
 
 # Generate interactive HTML charts (requires plotly)
 python3 plot_timeseries.py --html fp64_monitor_output/fp64_monitor_*.csv
 
-# Use a specific counter set (fp64, fp32, or int)
-python3 plot_timeseries.py --counters int fp64_monitor_output/fp64_monitor_*.csv
-
-# Auto-detect counter set based on input data
-python3 plot_timeseries.py --counters auto fp64_monitor_output/fp64_monitor_*.csv
+# Explicitly specify counter set
+python3 plot_timeseries.py --counters highlevel fp64_monitor_output/fp64_monitor_*.csv
 ```
 
 Options:
@@ -341,13 +374,13 @@ Options:
 |--------|-------------|
 | `--output PREFIX` | Output file prefix (default: derived from input) |
 | `--html` | Generate interactive HTML instead of PDF |
-| `--counters SET` | Counter set: fp64 (default), fp32, int, or auto |
+| `--counters SET` | Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2, or auto |
 
 Features:
-- Supports FP64, FP32, and INT counter sets (default: FP64)
+- Supports all counter sets (auto-detection by default)
 - Raw instruction counts with breakdown (stacked area chart)
-- Percentage of VALU over time
-- Variability bands showing rank imbalance (when multiple CSV files provided)
+- Percentage relative to total instructions
+- Average values across MPI ranks with variability bands
 - Interactive HTML output with zoom/hover (requires plotly)
 
 ### Python Dependencies
@@ -411,28 +444,28 @@ Even for a "pure FP64" workload, the FP64 percentage is typically **10-15%**, no
 
 For example, a STREAM Triad kernel (`a[i] = b[i] + c * d[i]`) on MI300A typically shows ~12.5% FP64 VALU percentage. This is the **true compute ratio**, not a measurement error.
 
-### Cumulative vs Delta Values
+### Cumulative Counter Values
 
-Counter values are **cumulative** over the application's lifetime. Each sample shows total counts since the context started. To get per-interval rates:
-- Use `compute_delta()` in the API
-- Or post-process CSV: `delta = current_row - previous_row`
+Counter values in the CSV output are **cumulative** over the application's lifetime. Each sample shows total counts since profiling started. To get per-interval rates:
+- Post-process CSV: `delta = current_row - previous_row`
+- The analysis scripts (`analyze_results.py`, `plot_timeseries.py`) handle this automatically
 
 ### Memory Monitoring
 
-The tool monitors memory usage from multiple sources:
+The tool monitors memory usage from multiple sources when `--use-amdsmi` is enabled:
 
 | Source | Columns | Description |
 |--------|---------|-------------|
-| HIP API | `gpu_mem_used_mb`, `gpu_mem_total_mb` | GPU memory from `hipMemGetInfo` |
-| ROCm SMI | `vram_used_mb`, `vram_total_mb`, `gtt_used_mb`, `gtt_total_mb` | Detailed GPU memory breakdown (optional) |
+| AMD SMI | `vram_used_mb`, `vram_total_mb` | GPU VRAM usage |
+| AMD SMI | `gtt_used_mb`, `gtt_total_mb` | GPU GTT (system memory accessible by GPU) |
 | /proc/self/statm | `cpu_resident_mb`, `cpu_virtual_mb` | CPU memory usage |
-| HWM | `*_hwm_mb` columns | High water marks (peak usage) |
+| High Water Marks | `*_hwm_mb` columns | Peak usage during application run |
 
 **Notes:**
-- ROCm SMI support requires `libdrm` development headers at build time
+- AMD SMI support is enabled by default at build time (requires libamd_smi)
 - Memory stats are collected even when counter sampling fails
 - On APU systems (like MI300A), GPU and CPU share the same physical memory
-- Virtual memory includes shared libraries and memory-mapped files
+- Use `--use-amdsmi` to enable GPU memory monitoring at runtime
 
 ### Multi-XCC/XCD GPUs
 
@@ -447,7 +480,7 @@ If all counter values are 0, check:
 1. **GPU Architecture**: Ensure your code is compiled for the correct GPU architecture
    ```bash
    # Check your GPU
-   rocm-smi --showproductname
+   amd-smi static --asic   # or: rocminfo | grep gfx
    
    # Rebuild with correct architecture
    cmake .. -DCMAKE_HIP_ARCHITECTURES=gfx942  # For MI300
@@ -507,7 +540,7 @@ measure_flops/
 ├── tools/
 │   ├── fp64_monitor.sh               # Wrapper script (recommended entry point)
 │   ├── fp64_monitor_tool.cpp         # ROCP_TOOL_LIBRARIES tool library
-│   └── preload.cpp                   # LD_PRELOAD helper for rocm-smi shutdown
+│   └── preload.cpp                   # LD_PRELOAD helper for clean shutdown
 │
 ├── scripts/
 │   └── build.sh                      # Build helper script
