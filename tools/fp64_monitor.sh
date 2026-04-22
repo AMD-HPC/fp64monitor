@@ -10,13 +10,39 @@
 #   fp64_monitor.sh [options] -- <application> [app_args...]
 #   mpirun -np 4 fp64_monitor.sh [options] -- ./your_mpi_app [args...]
 #
-# For full help including counter set descriptions, run: fp64_monitor.sh --help
+# For detailed help: fp64_monitor.sh --fullhelp
 #
 
 set -e
 
-# Show help message
+# Show brief help message (command line arguments only)
 show_help() {
+    cat << 'EOF'
+FP64 Monitor - GPU Instruction Profiling Tool
+
+Usage: fp64_monitor.sh [options] -- <application> [app_args...]
+
+Options:
+  --interval MS         Sampling interval in milliseconds (default: 1000)
+  --output PATTERN      Output file pattern (default: auto-generated)
+  --format FORMAT       Output format: csv, json, or text (default: csv)
+  --dir DIR             Output directory (default: fp64_monitor_output)
+  --gpu ID              GPU ID to monitor (default: 0)
+  --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
+  --use-amdsmi          Enable GPU memory monitoring via AMD SMI
+  --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
+  --preload             Use LD_PRELOAD wrapper for clean shutdown
+  --no-analyze          Skip automatic analysis after run
+  --verbose             Enable verbose output
+  --help                Show this help message
+  --fullhelp            Show detailed help with counter descriptions and examples
+
+EOF
+    exit 0
+}
+
+# Show full help message with all details
+show_fullhelp() {
     cat << 'EOF'
 FP64 Monitor - GPU Instruction Profiling Tool
 
@@ -29,7 +55,8 @@ GENERAL OPTIONS:
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpu ID              GPU ID to monitor (default: 0, or ROCR_VISIBLE_DEVICES)
   --verbose             Enable verbose output and rocprofiler-sdk logging
-  --help                Show this help message
+  --help                Show brief help message
+  --fullhelp            Show this detailed help message
 
 COUNTER SETS (--counters TYPE):
   fp64        FP64 instruction breakdown (default)
@@ -168,6 +195,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help|-h)
             show_help
+            ;;
+        --fullhelp)
+            show_fullhelp
             ;;
         --)
             shift
