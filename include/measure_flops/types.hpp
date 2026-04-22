@@ -100,18 +100,15 @@ struct InstructionMix {
     double fp64_compute_pct;  // FP64 as % of compute (excluding mem/branch)
     double mfma_fp64_pct;     // FP64 MFMA as % of all MFMA
 
-    // Memory statistics (bytes)
-    uint64_t gpu_mem_used{0};      // GPU memory used (from HIP)
-    uint64_t gpu_mem_total{0};     // GPU memory total (from HIP)
-    uint64_t vram_used{0};         // VRAM used (from ROCm SMI)
-    uint64_t vram_total{0};        // VRAM total (from ROCm SMI)
-    uint64_t gtt_used{0};          // GTT used - system memory for GPU (from ROCm SMI)
-    uint64_t gtt_total{0};         // GTT total (from ROCm SMI)
+    // Memory statistics (bytes) - from AMD SMI
+    uint64_t vram_used{0};         // VRAM used
+    uint64_t vram_total{0};        // VRAM total
+    uint64_t gtt_used{0};          // GTT used - system memory for GPU
+    uint64_t gtt_total{0};         // GTT total
     uint64_t cpu_mem_resident{0};  // CPU resident memory (from /proc/self/statm)
     uint64_t cpu_mem_virtual{0};   // CPU virtual memory (from /proc/self/statm)
     
     // High water marks
-    uint64_t gpu_mem_hwm{0};       // Peak GPU memory
     uint64_t vram_hwm{0};          // Peak VRAM
     uint64_t gtt_hwm{0};           // Peak GTT
     uint64_t cpu_mem_hwm{0};       // Peak CPU resident memory
@@ -165,15 +162,14 @@ struct MonitorConfig {
     std::vector<int> gpu_ids;            // Empty = all GPUs
     std::string output_file;             // Empty = stdout
     std::string output_format{"text"};   // text, csv, json
+    std::string counter_set_name{"fp64"}; // Counter set being used (for analysis tagging)
     bool aggregate_dimensions{true};     // Sum across XCC/SE
     bool continuous{true};               // Run until interrupted
     int num_samples{0};                  // 0 = unlimited (if continuous)
     bool verbose{false};
-    bool full_instruction_mix{false};    // Collect all counters vs FP64 only
     bool list_counters{false};           // List available counters and exit
     bool list_gpus{false};               // List available GPUs and exit
-    bool use_rocm_smi{false};
-    bool enable_memory_monitor{true};    // Enable HIP/ROCm-SMI memory tracking (can cause race conditions)
+    bool use_amd_smi{false};             // Enable AMD SMI memory tracking
     std::string tmpdir;                  // Fast local storage for temp output (e.g., /dev/shm)
 };
 
@@ -189,26 +185,6 @@ struct CounterSets {
             "SQ_INSTS_VALU_FMA_F64",
             "SQ_INSTS_VALU_TRANS_F64",
             "SQ_INSTS_VALU_MFMA_F64",
-            "SQ_INSTS_MFMA"
-        };
-    }
-
-    // Extended set including F32 for comparison
-    static std::vector<std::string> fp64_with_fp32() {
-        return {
-            "SQ_INSTS",
-            "SQ_INSTS_VALU",
-            "SQ_INSTS_SALU",
-            "SQ_INSTS_VALU_ADD_F64",
-            "SQ_INSTS_VALU_MUL_F64",
-            "SQ_INSTS_VALU_FMA_F64",
-            "SQ_INSTS_VALU_TRANS_F64",
-            "SQ_INSTS_VALU_MFMA_F64",
-            "SQ_INSTS_VALU_ADD_F32",
-            "SQ_INSTS_VALU_MUL_F32",
-            "SQ_INSTS_VALU_FMA_F32",
-            "SQ_INSTS_VALU_TRANS_F32",
-            "SQ_INSTS_VALU_MFMA_F32",
             "SQ_INSTS_MFMA"
         };
     }
@@ -291,42 +267,6 @@ struct CounterSets {
             "SQ_INSTS_EXP_GDS", // Export to GDS
             "SQ_INSTS_SENDMSG", // Send message (signaling)
             "SQ_INSTS_VSKIPPED" // Skipped due to exec mask
-        };
-    }
-
-    // Full instruction mix
-    static std::vector<std::string> full_instruction_mix() {
-        return {
-            "SQ_INSTS",
-            "SQ_INSTS_VALU",
-            "SQ_INSTS_SALU",
-            "SQ_INSTS_VMEM",
-            "SQ_INSTS_SMEM",
-            "SQ_INSTS_LDS",
-            "SQ_INSTS_BRANCH",
-            "SQ_INSTS_MFMA",
-            // FP64
-            "SQ_INSTS_VALU_ADD_F64",
-            "SQ_INSTS_VALU_MUL_F64",
-            "SQ_INSTS_VALU_FMA_F64",
-            "SQ_INSTS_VALU_TRANS_F64",
-            "SQ_INSTS_VALU_MFMA_F64",
-            // FP32
-            "SQ_INSTS_VALU_ADD_F32",
-            "SQ_INSTS_VALU_MUL_F32",
-            "SQ_INSTS_VALU_FMA_F32",
-            "SQ_INSTS_VALU_TRANS_F32",
-            "SQ_INSTS_VALU_MFMA_F32",
-            // FP16
-            "SQ_INSTS_VALU_ADD_F16",
-            "SQ_INSTS_VALU_MUL_F16",
-            "SQ_INSTS_VALU_FMA_F16",
-            "SQ_INSTS_VALU_MFMA_F16",
-            // Other
-            "SQ_INSTS_VALU_MFMA_BF16",
-            "SQ_INSTS_VALU_MFMA_I8",
-            "SQ_INSTS_VALU_INT32",
-            "SQ_INSTS_VALU_INT64"
         };
     }
 };

@@ -101,8 +101,8 @@ void test_with_mfma() {
     assert(approx_equal(mix.fp64_fma, 100));
     assert(approx_equal(mix.fp64_mfma, 50));
     
-    // FP64 VALU percentage: 100/5000 * 100 = 2%
-    assert(approx_equal(mix.fp64_valu_pct, 2.0));
+    // FP64 VALU percentage: (100+50)/5000 * 100 = 3% (MFMA included in VALU)
+    assert(approx_equal(mix.fp64_valu_pct, 3.0));
     
     // FP64 total percentage: (100+50)/10000 * 100 = 1.5%
     assert(approx_equal(mix.fp64_total_pct, 1.5));

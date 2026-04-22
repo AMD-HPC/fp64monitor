@@ -3,7 +3,7 @@
  * 
  * This intercepts the C runtime startup to run cleanup code after main()
  * returns but BEFORE atexit handlers run. This ensures we shut down the
- * memory monitor and sampling thread before rocm-smi or other libraries
+ * memory monitor and sampling thread before amd-smi or other libraries
  * are torn down.
  *
  * Execution order:
@@ -74,7 +74,7 @@ int fp64_monitor_main(int argc, char** argv, char** envp) {
     int ret = main_real(argc, argv, envp);
     
     // Cleanup BEFORE atexit handlers run.
-    // This ensures we shut down memory monitoring before rocm-smi
+    // This ensures we shut down memory monitoring before amd-smi
     // or other libraries are torn down via their atexit handlers.
     // fp64_monitor_fini has internal guard against double-call.
     fp64_monitor_fini();

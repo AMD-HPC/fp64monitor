@@ -52,7 +52,9 @@ void TextFormatter::write_header(std::ostream& os, const MonitorConfig& config) 
 }
 
 void TextFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
-                                  double elapsed_seconds) {
+                                  double elapsed_seconds,
+                                  const std::string& counter_set) {
+    (void)counter_set;  // Not displayed in text format
     double fp64_valu = mix.fp64_add + mix.fp64_mul + mix.fp64_fma + mix.fp64_trans;
 
     os << std::left << std::fixed
@@ -102,22 +104,22 @@ void TextFormatter::write_footer(std::ostream& os,
 void CsvFormatter::write_header(std::ostream& os, const MonitorConfig& config) {
     (void)config;  // Not used in CSV header
     
-    os << "sample_id,elapsed_seconds,gpu_id,"
+    os << "sample_id,elapsed_seconds,gpu_id,counter_set,"
        << "total_instructions,valu_instructions,salu_total,smem_total,vmem_total,vmem_rd,vmem_wr,vmem_rd_cycles,vmem_wr_cycles,lds_total,flat_total,gds_total,exp_gds_total,sendmsg_total,vskipped_total,"
        << "fp64_add,fp64_mul,fp64_fma,fp64_trans,fp64_mfma,"
        << "fp32_add,fp32_mul,fp32_fma,fp32_trans,fp32_mfma,"
        << "fp16_total,bf16_mfma,int8_mfma,int32_total,int64_total,"
        << "mfma_total,branch_total,"
        << "fp64_valu_pct,fp64_total_pct,fp64_compute_pct,mfma_fp64_pct,"
-       << "gpu_mem_used_mb,gpu_mem_total_mb,gpu_mem_pct,"
        << "vram_used_mb,vram_total_mb,gtt_used_mb,gtt_total_mb,"
        << "cpu_resident_mb,cpu_virtual_mb,"
-       << "gpu_mem_hwm_mb,vram_hwm_mb,gtt_hwm_mb,cpu_resident_hwm_mb,cpu_vm_hwm_mb"
+       << "vram_hwm_mb,gtt_hwm_mb,cpu_resident_hwm_mb,cpu_vm_hwm_mb"
        << "\n";
 }
 
 void CsvFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
-                                 double elapsed_seconds) {
+                                 double elapsed_seconds,
+                                 const std::string& counter_set) {
     os << std::fixed << std::setprecision(6);
     
     // Helper lambda to convert bytes to MB
@@ -125,15 +127,10 @@ void CsvFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
         return static_cast<double>(bytes) / (1024.0 * 1024.0);
     };
     
-    // Calculate GPU memory percentage
-    double gpu_mem_pct = 0.0;
-    if (mix.gpu_mem_total > 0) {
-        gpu_mem_pct = 100.0 * mix.gpu_mem_used / mix.gpu_mem_total;
-    }
-    
     os << mix.sample_id << ","
        << elapsed_seconds << ","
        << mix.gpu_id << ","
+       << counter_set << ","
        << static_cast<int64_t>(mix.total_instructions) << ","
        << static_cast<int64_t>(mix.valu_instructions) << ","
        << static_cast<int64_t>(mix.salu_total) << ","
@@ -172,16 +169,12 @@ void CsvFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
        << mix.fp64_compute_pct << ","
        << mix.mfma_fp64_pct << ","
        << std::setprecision(2)
-       << to_mb(mix.gpu_mem_used) << ","
-       << to_mb(mix.gpu_mem_total) << ","
-       << gpu_mem_pct << ","
        << to_mb(mix.vram_used) << ","
        << to_mb(mix.vram_total) << ","
        << to_mb(mix.gtt_used) << ","
        << to_mb(mix.gtt_total) << ","
        << to_mb(mix.cpu_mem_resident) << ","
        << to_mb(mix.cpu_mem_virtual) << ","
-       << to_mb(mix.gpu_mem_hwm) << ","
        << to_mb(mix.vram_hwm) << ","
        << to_mb(mix.gtt_hwm) << ","
        << to_mb(mix.cpu_mem_hwm) << ","
@@ -228,7 +221,8 @@ void JsonFormatter::write_header(std::ostream& os, const MonitorConfig& config) 
 }
 
 void JsonFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
-                                  double elapsed_seconds) {
+                                  double elapsed_seconds,
+                                  const std::string& counter_set) {
     if (!first_sample_) {
         os << ",\n";
     }
@@ -241,6 +235,9 @@ void JsonFormatter::write_sample(std::ostream& os, const InstructionMix& mix,
     os << "      \"sample_id\": " << mix.sample_id << ",\n";
     os << "      \"elapsed_seconds\": " << std::setprecision(3) << elapsed_seconds << ",\n";
     os << "      \"gpu_id\": " << mix.gpu_id << ",\n";
+    if (!counter_set.empty()) {
+        os << "      \"counter_set\": \"" << counter_set << "\",\n";
+    }
     os << "      \"counters\": {\n";
     os << "        \"total_instructions\": " << static_cast<int64_t>(mix.total_instructions) << ",\n";
     os << "        \"valu_instructions\": " << static_cast<int64_t>(mix.valu_instructions) << ",\n";

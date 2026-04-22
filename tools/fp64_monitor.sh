@@ -2,40 +2,15 @@
 #
 # FP64 Monitor Wrapper Script
 #
-# This script wraps an application to enable FP64 instruction monitoring.
-# Place this between mpirun and your executable:
+# This script wraps an application to enable GPU instruction monitoring using
+# hardware performance counters. It supports various counter sets for analyzing
+# different aspects of GPU workloads.
 #
-#   mpirun -np 4 /path/to/fp64_monitor.sh ./your_app [args...]
+# Usage:
+#   fp64_monitor.sh [options] -- <application> [app_args...]
+#   mpirun -np 4 fp64_monitor.sh [options] -- ./your_mpi_app [args...]
 #
-# Command line options (override environment variables):
-#   --interval MS         Sampling interval in ms (default: 1000)
-#   --output PATTERN      Output file pattern (default: auto)
-#   --format FORMAT       Output format: csv, json, text (default: csv)
-#   --dir DIR             Output directory (default: fp64_monitor_output)
-#   --gpu ID              GPU ID to monitor (default: 0)
-#   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
-#   --use-rocmsmi         Enable rocm-smi memory monitoring
-#   --preload             Wrap main function to prevent possible shutdown race condition
-#   --counters TYPE       Counter set: fp64 (default), fp32, fp16, int, salu
-#   --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
-#   --no-memory           Disable memory tracking (avoids hipInit race condition)
-#   --no-analyze          Disable auto-analysis after run
-#   --verbose             Enable verbose output
-#   --help                Show this help message
-#
-# Environment variables (optional, overridden by command line):
-#   FP64_MONITOR_INTERVAL      - Sampling interval in ms (default: 1000)
-#   FP64_MONITOR_OUTPUT        - Output file pattern (default: auto)
-#   FP64_MONITOR_FORMAT        - Output format: csv, json, text (default: csv)
-#   FP64_MONITOR_DIR           - Output directory (default: fp64_monitor_output)
-#   FP64_MONITOR_GPU           - GPU ID to monitor (default: 0)
-#   FP64_MONITOR_TMPDIR        - Fast local storage for temp output
-#   FP64_MONITOR_USE_ROCMSMI   - Set to 1 to enable rocm-smi memory monitoring
-#   FP64_MONITOR_PRELOAD       - Set to 1 to enable LD_PRELOAD wrapper
-#   FP64_MONITOR_QUIET         - Set to 1 to suppress rocprofiler SYS_PERFMON warnings
-#   FP64_MONITOR_MEMORY        - Set to 0 to disable memory tracking (default: 1)
-#   FP64_MONITOR_ANALYZE       - Set to 0 to disable auto-analysis (default: 1)
-#   FP64_MONITOR_VERBOSE       - Set to 1 for verbose output
+# For full help including counter set descriptions, run: fp64_monitor.sh --help
 #
 
 set -e
@@ -43,28 +18,101 @@ set -e
 # Show help message
 show_help() {
     cat << 'EOF'
+FP64 Monitor - GPU Instruction Profiling Tool
+
 Usage: fp64_monitor.sh [options] -- <application> [app_args...]
 
-Options:
-  --interval MS         Sampling interval in ms (default: 1000)
-  --output PATTERN      Output file pattern (default: auto)
-  --format FORMAT       Output format: csv, json, text (default: csv)
+GENERAL OPTIONS:
+  --interval MS         Sampling interval in milliseconds (default: 1000)
+  --output PATTERN      Output file pattern (default: auto-generated)
+  --format FORMAT       Output format: csv, json, or text (default: csv)
   --dir DIR             Output directory (default: fp64_monitor_output)
-  --gpu ID              GPU ID to monitor (default: 0)
-  --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
-  --use-rocmsmi         Enable rocm-smi memory monitoring
-  --preload             Wrap main function to prevent possible shutdown race condition
-  --counters TYPE       Counter set: fp64 (default), fp32, fp16, int or salu
-  --quiet               Suppress rocprofiler-sdk SYS_PERFMON warnings
-  --no-memory           Disable memory tracking (avoids hipInit race condition)
-  --no-analyze          Disable auto-analysis after run
-  --verbose             Enable verbose output
+  --gpu ID              GPU ID to monitor (default: 0, or ROCR_VISIBLE_DEVICES)
+  --verbose             Enable verbose output and rocprofiler-sdk logging
   --help                Show this help message
 
-Examples:
+COUNTER SETS (--counters TYPE):
+  fp64        FP64 instruction breakdown (default)
+              Counters: SQ_INSTS, SQ_INSTS_VALU, SQ_INSTS_VALU_ADD_F64,
+                        SQ_INSTS_VALU_MUL_F64, SQ_INSTS_VALU_FMA_F64,
+                        SQ_INSTS_VALU_TRANS_F64, SQ_INSTS_MFMA, SQ_INSTS_MFMA_MOPS_F64
+
+  fp32        FP32 instruction breakdown
+              Counters: SQ_INSTS, SQ_INSTS_VALU, SQ_INSTS_VALU_ADD_F32,
+                        SQ_INSTS_VALU_MUL_F32, SQ_INSTS_VALU_FMA_F32,
+                        SQ_INSTS_VALU_TRANS_F32, SQ_INSTS_MFMA, SQ_INSTS_MFMA_MOPS_F32
+
+  fp16        FP16/BF16 instruction breakdown
+              Counters: SQ_INSTS, SQ_INSTS_VALU, SQ_INSTS_VALU_ADD_F16,
+                        SQ_INSTS_VALU_MUL_F16, SQ_INSTS_VALU_FMA_F16,
+                        SQ_INSTS_MFMA, SQ_INSTS_MFMA_MOPS_F16, SQ_INSTS_MFMA_MOPS_BF16
+
+  int         Integer instruction breakdown
+              Counters: SQ_INSTS, SQ_INSTS_VALU, SQ_INSTS_VALU_INT32,
+                        SQ_INSTS_VALU_INT64, SQ_INSTS_MFMA, SQ_INSTS_MFMA_MOPS_I8
+
+  salu        Scalar ALU and memory breakdown
+              Counters: SQ_INSTS, SQ_INSTS_SALU, SQ_INSTS_SMEM, SQ_INSTS_FLAT,
+                        SQ_INSTS_LDS, SQ_INSTS_BRANCH
+
+  highlevel   High-level instruction mix (7 categories)
+              Counters: SQ_INSTS, SQ_INSTS_VALU, SQ_INSTS_SALU, SQ_INSTS_VMEM,
+                        SQ_INSTS_SMEM, SQ_INSTS_LDS, SQ_INSTS_BRANCH, SQ_INSTS_MFMA
+
+  highlevel2  Other instruction types
+              Counters: SQ_INSTS, SQ_INSTS_FLAT, SQ_INSTS_GDS, SQ_INSTS_EXP_GDS,
+                        SQ_INSTS_SENDMSG, SQ_INSTS_VSKIPPED
+
+MEMORY MONITORING:
+  --use-amdsmi          Enable GPU memory monitoring via AMD SMI
+                        Reports VRAM usage, GTT usage, and high-water marks
+                        Automatically enables --preload for clean shutdown
+
+ADVANCED OPTIONS:
+  --tmpdir DIR          Write samples to fast local storage (e.g., /dev/shm),
+                        then copy to final destination at exit. Useful for
+                        reducing I/O load on parallel filesystems.
+  --preload             Use LD_PRELOAD to wrap main() for clean shutdown.
+                        Required for --use-amdsmi, optional otherwise.
+  --no-analyze          Skip automatic analysis after run completes
+
+ENVIRONMENT VARIABLES (overridden by command line options):
+  FP64_MONITOR_INTERVAL      Sampling interval in ms (default: 1000)
+  FP64_MONITOR_OUTPUT        Output file pattern
+  FP64_MONITOR_FORMAT        Output format: csv, json, text
+  FP64_MONITOR_DIR           Output directory
+  FP64_MONITOR_GPU           GPU ID to monitor
+  FP64_MONITOR_COUNTERS      Counter set name
+  FP64_MONITOR_TMPDIR        Temporary storage directory
+  FP64_MONITOR_USE_AMDSMI    Set to 1 to enable AMD SMI memory monitoring
+  FP64_MONITOR_PRELOAD       Set to 1 to enable LD_PRELOAD wrapper
+  FP64_MONITOR_ANALYZE       Set to 0 to disable auto-analysis
+  FP64_MONITOR_VERBOSE       Set to 1 for verbose output
+
+EXAMPLES:
+  # Basic FP64 profiling
   fp64_monitor.sh -- ./my_app
-  fp64_monitor.sh --interval 500 --verbose -- ./my_app arg1 arg2
-  mpirun -np 4 fp64_monitor.sh --use-rocmsmi --tmpdir /dev/shm -- ./my_mpi_app
+
+  # Profile with memory monitoring and 500ms sampling
+  fp64_monitor.sh --interval 500 --use-amdsmi -- ./my_app
+
+  # High-level instruction mix analysis
+  fp64_monitor.sh --counters highlevel --use-amdsmi -- ./my_app
+
+  # MPI application with temp storage
+  mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./my_mpi_app
+
+  # Verbose output for debugging
+  fp64_monitor.sh --verbose --counters fp64 -- ./my_app
+
+OUTPUT:
+  CSV files are written to the output directory (default: fp64_monitor_output/).
+  After the run completes, an automatic analysis is performed showing:
+  - Instruction counts aggregated across all MPI ranks
+  - Percentages relative to total instructions
+  - Memory high-water marks (if --use-amdsmi is used)
+  - A detailed report is saved to fp64_report.txt
+
 EOF
     exit 0
 }
@@ -97,8 +145,8 @@ while [[ $# -gt 0 ]]; do
             export FP64_MONITOR_TMPDIR="$2"
             shift 2
             ;;
-        --use-rocmsmi)
-            export FP64_MONITOR_USE_ROCMSMI=1
+        --use-amdsmi)
+            export FP64_MONITOR_USE_AMDSMI=1
             export FP64_MONITOR_PRELOAD=1
             shift
             ;;
@@ -109,14 +157,6 @@ while [[ $# -gt 0 ]]; do
         --counters)
             export FP64_MONITOR_COUNTERS="$2"
             shift 2
-            ;;
-        --quiet)
-            export FP64_MONITOR_QUIET=1
-            shift
-            ;;
-        --no-memory)
-            export FP64_MONITOR_MEMORY=0
-            shift
             ;;
         --no-analyze)
             export FP64_MONITOR_ANALYZE=0
@@ -172,9 +212,9 @@ else
     export ROCP_TOOL_LIBRARIES="${LIB_PATH}"
 fi
 
-# When FP64_MONITOR_USE_ROCMSMI=1 or FP64_MONITOR_PRELOAD=1, use LD_PRELOAD so our
+# When FP64_MONITOR_USE_AMDSMI=1 or FP64_MONITOR_PRELOAD=1, use LD_PRELOAD so our
 # __libc_start_main wrapper can intercept main() exit and shut down cleanly.
-# This prevents possible race conditions when rocm-smi or other libraries are torn down.
+# This prevents possible race conditions when amd-smi or other libraries are torn down.
 # Save original LD_PRELOAD to restore after application runs.
 OLD_LD_PRELOAD="${LD_PRELOAD:-}"
 if [ "${FP64_MONITOR_PRELOAD}" = "1" ]; then
@@ -217,9 +257,10 @@ if [[ -v ROCR_VISIBLE_DEVICES ]] ; then
     export FP64_MONITOR_GPU=${ROCR_VISIBLE_DEVICES}
 fi
 
-# Suppress rocprofiler-sdk SYS_PERFMON warnings if --quiet is set
+# Suppress verbose rocprofiler-sdk logging by default
 # GLOG_minloglevel: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
-if [ "${FP64_MONITOR_QUIET}" = "1" ]; then
+# Only show these messages if --verbose is used
+if [ "${FP64_MONITOR_VERBOSE}" != "1" ]; then
     export GLOG_minloglevel=3
 fi
 

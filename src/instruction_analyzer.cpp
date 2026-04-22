@@ -227,7 +227,7 @@ InstructionAnalyzer::Summary InstructionAnalyzer::compute_summary(
 }
 
 std::vector<std::string> InstructionAnalyzer::get_required_counters() {
-    return CounterSets::full_instruction_mix();
+    return CounterSets::fp64_minimal();
 }
 
 std::vector<std::string> InstructionAnalyzer::get_fp64_counters() {
