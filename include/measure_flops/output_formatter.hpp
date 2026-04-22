@@ -19,7 +19,8 @@ public:
 
     // Write a single instruction mix sample
     virtual void write_sample(std::ostream& os, const InstructionMix& mix,
-                              double elapsed_seconds) = 0;
+                              double elapsed_seconds,
+                              const std::string& counter_set = "") = 0;
 
     // Write footer/summary (called once at end)
     virtual void write_footer(std::ostream& os,
@@ -33,7 +34,8 @@ class TextFormatter : public OutputFormatter {
 public:
     void write_header(std::ostream& os, const MonitorConfig& config) override;
     void write_sample(std::ostream& os, const InstructionMix& mix,
-                      double elapsed_seconds) override;
+                      double elapsed_seconds,
+                      const std::string& counter_set = "") override;
     void write_footer(std::ostream& os,
                       const InstructionAnalyzer::Summary& summary) override;
 
@@ -45,7 +47,8 @@ class CsvFormatter : public OutputFormatter {
 public:
     void write_header(std::ostream& os, const MonitorConfig& config) override;
     void write_sample(std::ostream& os, const InstructionMix& mix,
-                      double elapsed_seconds) override;
+                      double elapsed_seconds,
+                      const std::string& counter_set = "") override;
     void write_footer(std::ostream& os,
                       const InstructionAnalyzer::Summary& summary) override;
 };
@@ -54,7 +57,8 @@ class JsonFormatter : public OutputFormatter {
 public:
     void write_header(std::ostream& os, const MonitorConfig& config) override;
     void write_sample(std::ostream& os, const InstructionMix& mix,
-                      double elapsed_seconds) override;
+                      double elapsed_seconds,
+                      const std::string& counter_set = "") override;
     void write_footer(std::ostream& os,
                       const InstructionAnalyzer::Summary& summary) override;
 

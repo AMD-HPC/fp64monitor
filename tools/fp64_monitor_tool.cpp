@@ -17,8 +17,7 @@
 //   FP64_MONITOR_FORMAT    - Output format: text, csv, json (default: csv)
 //   FP64_MONITOR_TMPDIR    - Write to fast local storage (e.g., /dev/shm), copy
 //                            to final location at exit (reduces I/O on parallel FS)
-//   FP64_MONITOR_USE_ROCMSMI - Set to 1 to enable rocm-smi memory monitoring
-//   FP64_MONITOR_MEMORY    - Set to 0 to disable memory tracking (avoids hipInit race)
+//   FP64_MONITOR_USE_AMDSMI - Set to 1 to enable amd-smi memory monitoring
 
 #include "measure_flops/counter_sampler.hpp"
 #include "measure_flops/instruction_analyzer.hpp"
@@ -42,7 +41,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <future>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -407,28 +405,10 @@ struct ToolState {
     std::string temp_filepath;   // Path to temp file (if using tmpdir)
     std::string final_filepath;  // Final destination path
     
-    // Destructor to ensure clean thread shutdown
-    // This prevents std::terminate() if tool_fini wasn't called
+    // Destructor ensures clean shutdown even if tool_fini wasn't called explicitly.
+    // Uses call_once internally so it's safe to call multiple times.
     ~ToolState() {
         tool_fini(nullptr);
-        /*
-        // Signal thread to stop if not already done
-        running.store(false);
-        
-        // Only attempt cleanup if tool_fini hasn't already done it
-        if (!shutdown_complete.load()) {
-            if (sampling_thread && sampling_thread->joinable()) {
-                // Detach the thread to prevent std::terminate()
-                // This is safer than join() during abnormal shutdown
-                // since the thread may be blocked on rocprofiler calls
-                sampling_thread->detach();
-            }
-            
-            // Skip rocprofiler cleanup in destructor - it can cause segfaults
-            // if the rocprofiler runtime has already been torn down
-            // The OS will clean up when the process exits
-        }
-        */
     }
 };
 
@@ -525,6 +505,9 @@ bool configure_counters() {
     } else {
         counters = CounterSets::fp64_minimal();
     }
+    
+    // Store counter set name in config for output tagging
+    g_state.config.counter_set_name = counter_set_name;
     
     if (g_state.config.verbose && get_mpi_rank() <= 0) {
         std::cerr << "[FP64 Monitor] Counter set: " << counter_set_name << "\n";
@@ -676,15 +659,12 @@ void sampling_thread_func() {
                 InstructionMix mix = InstructionAnalyzer::analyze(final_sample);
                 if (g_state.memory_monitor.is_initialized() && !g_state.memory_monitor.is_shutdown()) {
                     MemoryStats mem = g_state.memory_monitor.sample();
-                    mix.gpu_mem_used = mem.gpu_used;
-                    mix.gpu_mem_total = mem.gpu_total;
                     mix.vram_used = mem.vram_used;
                     mix.vram_total = mem.vram_total;
                     mix.gtt_used = mem.gtt_used;
                     mix.gtt_total = mem.gtt_total;
                     mix.cpu_mem_resident = mem.cpu_resident;
                     mix.cpu_mem_virtual = mem.cpu_vm_size;
-                    mix.gpu_mem_hwm = mem.gpu_used_hwm;
                     mix.vram_hwm = mem.vram_used_hwm;
                     mix.gtt_hwm = mem.gtt_used_hwm;
                     mix.cpu_mem_hwm = mem.cpu_resident_hwm;
@@ -698,7 +678,8 @@ void sampling_thread_func() {
                 }
                 {
                     std::lock_guard<std::mutex> lock(g_state.output_mutex);
-                    g_state.formatter->write_sample(*g_state.output, mix, elapsed);
+                    g_state.formatter->write_sample(*g_state.output, mix, elapsed,
+                                                     g_state.config.counter_set_name);
                     g_state.output->flush();
                 }
             }
@@ -720,14 +701,20 @@ void sampling_thread_func() {
         mix.gpu_id = sample.gpu_id;
         
         // Always collect memory statistics, even if counter sampling failed
+        static bool smi_error_reported = false;
         if (g_state.memory_monitor.is_initialized() && g_state.running.load()) {
             MemoryStats mem = g_state.memory_monitor.sample();
             
-            // GPU memory from HIP
-            mix.gpu_mem_used = mem.gpu_used;
-            mix.gpu_mem_total = mem.gpu_total;
+            // Report AMD SMI errors once (only if user requested AMD SMI and it failed)
+            if (g_state.config.use_amd_smi && !mem.smi_valid && !smi_error_reported) {
+                smi_error_reported = true;
+                if (is_rank0) {
+                    std::cerr << "[FP64 Monitor] Warning: AMD SMI memory query failed: "
+                              << g_state.memory_monitor.get_last_error() << "\n";
+                }
+            }
             
-            // GPU memory from ROCm SMI (more detailed)
+            // GPU memory from AMD SMI
             mix.vram_used = mem.vram_used;
             mix.vram_total = mem.vram_total;
             mix.gtt_used = mem.gtt_used;
@@ -738,7 +725,6 @@ void sampling_thread_func() {
             mix.cpu_mem_virtual = mem.cpu_vm_size;
             
             // High water marks
-            mix.gpu_mem_hwm = mem.gpu_used_hwm;
             mix.vram_hwm = mem.vram_used_hwm;
             mix.gtt_hwm = mem.gtt_used_hwm;
             mix.cpu_mem_hwm = mem.cpu_resident_hwm;
@@ -757,7 +743,8 @@ void sampling_thread_func() {
         // Write sample
         {
             std::lock_guard<std::mutex> lock(g_state.output_mutex);
-            g_state.formatter->write_sample(*g_state.output, mix, elapsed);
+            g_state.formatter->write_sample(*g_state.output, mix, elapsed,
+                                             g_state.config.counter_set_name);
             g_state.output->flush();
         }
         
@@ -803,11 +790,8 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     if (const char* format = std::getenv("FP64_MONITOR_FORMAT")) {
         output_format = format;
     }
-    if (const char* usesmi = std::getenv("FP64_MONITOR_USE_ROCMSMI")) {
-        g_state.config.use_rocm_smi = (safe_strtol(usesmi, 0, 0, 1) != 0);
-    }
-    if (const char* mem = std::getenv("FP64_MONITOR_MEMORY")) {
-        g_state.config.enable_memory_monitor = (safe_strtol(mem, 1, 0, 1) != 0);
+    if (const char* usesmi = std::getenv("FP64_MONITOR_USE_AMDSMI")) {
+        g_state.config.use_amd_smi = (safe_strtol(usesmi, 0, 0, 1) != 0);
     }
     if (const char* tmpdir = std::getenv("FP64_MONITOR_TMPDIR")) {
         g_state.config.tmpdir = tmpdir;
@@ -833,15 +817,15 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     int mpi_rank = get_mpi_rank();
     bool is_rank0 = (mpi_rank <= 0);  // rank 0 or non-MPI (-1)
     
-    // Check if user requested ROCm SMI but it wasn't compiled in
-#ifndef HAVE_ROCM_SMI
-    if (g_state.config.use_rocm_smi) {
+    // Check if user requested AMD SMI but it wasn't compiled in
+#ifndef HAVE_AMD_SMI
+    if (g_state.config.use_amd_smi) {
         if (is_rank0) {
-            std::cerr << "[FP64 Monitor] Error: ROCm SMI support was not enabled at build time.\n"
-                      << "[FP64 Monitor] Rebuild with: cmake -DENABLE_ROCM_SMI=ON ..\n"
-                      << "[FP64 Monitor] Continuing without ROCm SMI memory monitoring.\n";
+            std::cerr << "[FP64 Monitor] Error: AMD SMI support was not enabled at build time.\n"
+                      << "[FP64 Monitor] Rebuild with: cmake -DENABLE_AMD_SMI=ON ..\n"
+                      << "[FP64 Monitor] Continuing without AMD SMI memory monitoring.\n";
         }
-        g_state.config.use_rocm_smi = false;
+        g_state.config.use_amd_smi = false;
     }
 #endif
     
@@ -975,18 +959,14 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
         std::cerr << "[FP64 Monitor] Output format: " << output_format << "\n";
     }
     
-    // Initialize memory monitor (skip if disabled to avoid hipInit race condition)
-    if (g_state.config.enable_memory_monitor) {
-        if (!g_state.memory_monitor.initialize(gpu_id, g_state.config.use_rocm_smi)) {
-            if (g_state.config.verbose && is_rank0) {
-                std::cerr << "[FP64 Monitor] Warning: Memory monitoring initialization failed: "
-                          << g_state.memory_monitor.get_last_error() << "\n";
-            }
-        } else if (g_state.config.verbose && is_rank0) {
-            std::cerr << "[FP64 Monitor] Memory monitoring enabled\n";
+    // Initialize memory monitor (uses AMD SMI if enabled)
+    if (!g_state.memory_monitor.initialize(gpu_id, g_state.config.use_amd_smi)) {
+        if (g_state.config.verbose && is_rank0) {
+            std::cerr << "[FP64 Monitor] Warning: Memory monitoring initialization failed: "
+                      << g_state.memory_monitor.get_last_error() << "\n";
         }
     } else if (g_state.config.verbose && is_rank0) {
-        std::cerr << "[FP64 Monitor] Memory monitoring disabled (FP64_MONITOR_MEMORY=0)\n";
+        std::cerr << "[FP64 Monitor] Memory monitoring enabled\n";
     }
     
     // Populate counter map
@@ -1040,7 +1020,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void*) {
     
     // Register atexit handler LAST so it runs FIRST during cleanup (LIFO order).
     // This ensures we shutdown memory monitoring before other libraries
-    // (HIP, HSA, rocm-smi) are torn down, preventing crashes when the
+    // (HIP, HSA, amd-smi) are torn down, preventing crashes when the
     // sampling thread tries to query already-unloaded libraries.
     std::atexit([]() {
         g_state.memory_monitor.shutdown();
@@ -1136,24 +1116,12 @@ void tool_fini_impl() {
         }
     }
     
-    // Join the sampling thread properly (with timeout to avoid hanging)
-    // This is safer than detach() which can leave the thread accessing freed memory
+    // Join the sampling thread
+    // The thread should have exited by now since we waited for the sampling flag.
+    // If it hasn't, join() will block - this is intentional to ensure clean shutdown.
+    // A hung thread indicates a bug that should be fixed, not masked with detach().
     if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
-        // The thread should have exited by now since we waited for sampling to stop
-        // Use a short additional wait just in case
-        auto join_future = std::async(std::launch::async, []{
-            if (g_state.sampling_thread && g_state.sampling_thread->joinable()) {
-                g_state.sampling_thread->join();
-            }
-        });
-        
-        if (join_future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
-            // Thread didn't join in time - detach as fallback to prevent crash
-            if (g_state.config.verbose && is_rank0) {
-                std::cerr << "[FP64 Monitor] Warning: Thread join timeout, detaching\n";
-            }
-            // Can't detach after join attempt started, thread will be abandoned
-        }
+        g_state.sampling_thread->join();
     }
     
     g_state.shutdown_complete.store(true);

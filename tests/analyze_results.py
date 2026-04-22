@@ -513,6 +513,51 @@ def write_detailed_report_to_file(filenames, f):
     f.write("=" * 78 + "\n")
 
 
+def detect_counter_set(rows):
+    """Detect which counter set was used from CSV data."""
+    if not rows:
+        return "unknown"
+    
+    # Check if counter_set column exists and use it
+    if 'counter_set' in rows[0]:
+        counter_sets = set(r.get('counter_set', '') for r in rows if r.get('counter_set'))
+        if counter_sets:
+            # Return the most common one (or first if all same)
+            return list(counter_sets)[0]
+    
+    # Fallback: infer from which counters have non-zero values
+    sample = rows[0]
+    
+    # Check for highlevel-specific counters
+    has_highlevel = any(float(sample.get(c, 0)) > 0 for c in 
+                        ['valu_instructions', 'salu_total', 'vmem_total', 'smem_total', 
+                         'lds_total', 'branch_total', 'mfma_total'])
+    
+    # Check for FP64-specific counters
+    has_fp64 = any(float(sample.get(c, 0)) > 0 for c in 
+                   ['fp64_add', 'fp64_mul', 'fp64_fma', 'fp64_trans', 'fp64_mfma'])
+    
+    # Check for FP32-specific counters
+    has_fp32 = any(float(sample.get(c, 0)) > 0 for c in 
+                   ['fp32_add', 'fp32_mul', 'fp32_fma', 'fp32_trans', 'fp32_mfma'])
+    
+    # Check for highlevel2-specific counters
+    has_highlevel2 = any(float(sample.get(c, 0)) > 0 for c in 
+                         ['flat_total', 'gds_total', 'exp_gds_total', 
+                          'sendmsg_total', 'vskipped_total'])
+    
+    if has_fp64 and not has_fp32:
+        return "fp64"
+    elif has_fp32:
+        return "fp32"
+    elif has_highlevel2 and not has_highlevel:
+        return "highlevel2"
+    elif has_highlevel:
+        return "highlevel"
+    else:
+        return "unknown"
+
+
 def analyze_fp64_monitor_files(filenames):
     """Analyze and aggregate CSV output from one or more fp64_monitor files."""
     
@@ -528,6 +573,9 @@ def analyze_fp64_monitor_files(filenames):
     if not all_rows:
         print("Error: No data found in CSV files")
         return
+    
+    # Detect counter set
+    counter_set = detect_counter_set(all_rows)
     
     # Determine report file location (same directory as input files)
     input_dir = str(Path(filenames[0]).parent)
@@ -549,6 +597,7 @@ def analyze_fp64_monitor_files(filenames):
         p("FP64 Monitor Analysis Summary")
         p("=" * 70)
         p()
+        p(f"Counter Set:   {counter_set}")
         p(f"MPI Ranks:     {num_ranks}")
         p(f"Total samples: {len(all_rows)}")
         
@@ -589,73 +638,75 @@ def analyze_fp64_monitor_files(filenames):
                 p("General Statistics")
                 p("-" * 70)
                 p()
-                p(f"  Total VALU:      {total_valu:>18,.0f}")
+                if total_valu > 0:
+                    p(f"  Total VALU:      {total_valu:>18,.0f}")
                 p(f"  Total Instr:     {total_insts:>18,.0f}")
                 p()
             
-            # High-Level Instruction Mix (show all 7 categories)
-            total_salu = sum_across_ranks('salu_total')
-            total_vmem = sum_across_ranks('vmem_total')
-            total_smem = sum_across_ranks('smem_total')
-            total_lds = sum_across_ranks('lds_total')
-            total_branch = sum_across_ranks('branch_total')
-            total_mfma = sum_across_ranks('mfma_total')
+            # High-Level Instruction Mix - ONLY show if highlevel counter set was used
+            if counter_set == 'highlevel':
+                total_salu = sum_across_ranks('salu_total')
+                total_vmem = sum_across_ranks('vmem_total')
+                total_smem = sum_across_ranks('smem_total')
+                total_lds = sum_across_ranks('lds_total')
+                total_branch = sum_across_ranks('branch_total')
+                total_mfma = sum_across_ranks('mfma_total')
+                
+                highlevel_sum = total_valu + total_salu + total_vmem + total_smem + total_lds + total_branch + total_mfma
+                if highlevel_sum > 0 and total_insts > 0:
+                    p("-" * 70)
+                    p("High-Level Instruction Mix (aggregated across all ranks)")
+                    p("-" * 70)
+                    p()
+                    p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
+                    p(f"  {'-'*12} {'-'*18} {'-'*12}")
+                    p(f"  {'VALU':<12} {total_valu:>18,.0f} {100*total_valu/total_insts:>11.2f}%")
+                    p(f"  {'SALU':<12} {total_salu:>18,.0f} {100*total_salu/total_insts:>11.2f}%")
+                    p(f"  {'VMEM':<12} {total_vmem:>18,.0f} {100*total_vmem/total_insts:>11.2f}%")
+                    p(f"  {'SMEM':<12} {total_smem:>18,.0f} {100*total_smem/total_insts:>11.2f}%")
+                    p(f"  {'LDS':<12} {total_lds:>18,.0f} {100*total_lds/total_insts:>11.2f}%")
+                    p(f"  {'Branch':<12} {total_branch:>18,.0f} {100*total_branch/total_insts:>11.2f}%")
+                    p(f"  {'MFMA':<12} {total_mfma:>18,.0f} {100*total_mfma/total_insts:>11.2f}%")
+                    p(f"  {'-'*12} {'-'*18} {'-'*12}")
+                    p(f"  {'Subtotal':<12} {highlevel_sum:>18,.0f} {100*highlevel_sum/total_insts:>11.2f}%")
+                    p(f"  {'Total':<12} {total_insts:>18,.0f} {'100.00%':>12}")
+                    p()
             
-            # Show high-level breakdown if we have instruction data
-            highlevel_sum = total_valu + total_salu + total_vmem + total_smem + total_lds + total_branch + total_mfma
-            if highlevel_sum > 0 and total_insts > 0:
-                p("-" * 70)
-                p("High-Level Instruction Mix (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
-                p(f"  {'-'*12} {'-'*18} {'-'*12}")
-                p(f"  {'VALU':<12} {total_valu:>18,.0f} {100*total_valu/total_insts:>11.2f}%")
-                p(f"  {'SALU':<12} {total_salu:>18,.0f} {100*total_salu/total_insts:>11.2f}%")
-                p(f"  {'VMEM':<12} {total_vmem:>18,.0f} {100*total_vmem/total_insts:>11.2f}%")
-                p(f"  {'SMEM':<12} {total_smem:>18,.0f} {100*total_smem/total_insts:>11.2f}%")
-                p(f"  {'LDS':<12} {total_lds:>18,.0f} {100*total_lds/total_insts:>11.2f}%")
-                p(f"  {'Branch':<12} {total_branch:>18,.0f} {100*total_branch/total_insts:>11.2f}%")
-                p(f"  {'MFMA':<12} {total_mfma:>18,.0f} {100*total_mfma/total_insts:>11.2f}%")
-                p(f"  {'-'*12} {'-'*18} {'-'*12}")
-                p(f"  {'Subtotal':<12} {highlevel_sum:>18,.0f} {100*highlevel_sum/total_insts:>11.2f}%")
-                p(f"  {'Total':<12} {total_insts:>18,.0f} {'100.00%':>12}")
-                p()
+            # High-Level 2: Other instruction types - ONLY show if highlevel2 counter set was used
+            if counter_set == 'highlevel2':
+                total_flat = sum_across_ranks('flat_total')
+                total_gds = sum_across_ranks('gds_total')
+                total_exp_gds = sum_across_ranks('exp_gds_total')
+                total_sendmsg = sum_across_ranks('sendmsg_total')
+                total_vskipped = sum_across_ranks('vskipped_total')
+                
+                highlevel2_sum = total_flat + total_gds + total_exp_gds + total_sendmsg + total_vskipped
+                if highlevel2_sum > 0 and total_insts > 0:
+                    p("-" * 70)
+                    p("Other Instruction Types (aggregated across all ranks)")
+                    p("-" * 70)
+                    p()
+                    p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
+                    p(f"  {'-'*12} {'-'*18} {'-'*12}")
+                    p(f"  {'FLAT':<12} {total_flat:>18,.0f} {100*total_flat/total_insts:>11.2f}%")
+                    p(f"  {'GDS':<12} {total_gds:>18,.0f} {100*total_gds/total_insts:>11.2f}%")
+                    p(f"  {'EXP_GDS':<12} {total_exp_gds:>18,.0f} {100*total_exp_gds/total_insts:>11.2f}%")
+                    p(f"  {'SENDMSG':<12} {total_sendmsg:>18,.0f} {100*total_sendmsg/total_insts:>11.2f}%")
+                    p(f"  {'VSKIPPED':<12} {total_vskipped:>18,.0f} {100*total_vskipped/total_insts:>11.2f}%")
+                    p(f"  {'-'*12} {'-'*18} {'-'*12}")
+                    p(f"  {'Subtotal':<12} {highlevel2_sum:>18,.0f} {100*highlevel2_sum/total_insts:>11.2f}%")
+                    p()
             
-            # High-Level 2: Other instruction types (FLAT, GDS, SENDMSG, VSKIPPED)
-            total_flat = sum_across_ranks('flat_total')
-            total_gds = sum_across_ranks('gds_total')
-            total_exp_gds = sum_across_ranks('exp_gds_total')
-            total_sendmsg = sum_across_ranks('sendmsg_total')
-            total_vskipped = sum_across_ranks('vskipped_total')
-            
-            highlevel2_sum = total_flat + total_gds + total_exp_gds + total_sendmsg + total_vskipped
-            if highlevel2_sum > 0 and total_insts > 0:
-                p("-" * 70)
-                p("Other Instruction Types (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
-                p(f"  {'-'*12} {'-'*18} {'-'*12}")
-                p(f"  {'FLAT':<12} {total_flat:>18,.0f} {100*total_flat/total_insts:>11.2f}%")
-                p(f"  {'GDS':<12} {total_gds:>18,.0f} {100*total_gds/total_insts:>11.2f}%")
-                p(f"  {'EXP_GDS':<12} {total_exp_gds:>18,.0f} {100*total_exp_gds/total_insts:>11.2f}%")
-                p(f"  {'SENDMSG':<12} {total_sendmsg:>18,.0f} {100*total_sendmsg/total_insts:>11.2f}%")
-                p(f"  {'VSKIPPED':<12} {total_vskipped:>18,.0f} {100*total_vskipped/total_insts:>11.2f}%")
-                p(f"  {'-'*12} {'-'*18} {'-'*12}")
-                p(f"  {'Subtotal':<12} {highlevel2_sum:>18,.0f} {100*highlevel2_sum/total_insts:>11.2f}%")
-                p()
-            
-            # FP64 Instruction Counts (only if data present)
+            # FP64 Instruction Counts - show if fp64 counter set was used or data present
             total_fp64_add = sum_across_ranks('fp64_add')
             total_fp64_mul = sum_across_ranks('fp64_mul')
             total_fp64_fma = sum_across_ranks('fp64_fma')
             total_fp64_trans = sum_across_ranks('fp64_trans')
             total_fp64_mfma = sum_across_ranks('fp64_mfma')
-            # Include MFMA since SQ_INSTS_VALU includes MFMA instructions
             total_fp64_valu = total_fp64_add + total_fp64_mul + total_fp64_fma + total_fp64_trans + total_fp64_mfma
             
-            if total_fp64_valu > 0:
+            # Only show FP64 section if fp64 counter set was used
+            if counter_set == 'fp64' and total_fp64_valu > 0:
                 p("-" * 70)
                 p("FP64 Instruction Counts (aggregated across all ranks)")
                 p("-" * 70)
@@ -679,260 +730,123 @@ def analyze_fp64_monitor_files(filenames):
                     p(f"FP64 %% of Total:  {total_pct:>10.2f}%")
                 p()
             
-            # FP32 Instruction Counts (only if data present)
-            total_fp32_add = sum_across_ranks('fp32_add')
-            total_fp32_mul = sum_across_ranks('fp32_mul')
-            total_fp32_fma = sum_across_ranks('fp32_fma')
-            total_fp32_trans = sum_across_ranks('fp32_trans')
-            total_fp32_mfma = sum_across_ranks('fp32_mfma')
-            total_fp32_valu = total_fp32_add + total_fp32_mul + total_fp32_fma + total_fp32_trans + total_fp32_mfma
-            
-            if total_fp32_valu > 0:
-                p("-" * 70)
-                p("FP32 Instruction Counts (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  FP32 ADD:        {total_fp32_add:>18,.0f}")
-                p(f"  FP32 MUL:        {total_fp32_mul:>18,.0f}")
-                p(f"  FP32 FMA:        {total_fp32_fma:>18,.0f}")
-                p(f"  FP32 Trans:      {total_fp32_trans:>18,.0f}")
-                p(f"  FP32 MFMA:       {total_fp32_mfma:>18,.0f}")
-                p(f"  ----------------------------------------")
-                p(f"  Total FP32 VALU: {total_fp32_valu:>18,.0f}")
-                p()
-                if total_valu > 0:
-                    p(f"FP32 %% of VALU:   {(total_fp32_valu / total_valu) * 100:>10.2f}%")
-                if total_insts > 0:
-                    p(f"FP32 %% of Total:  {(total_fp32_valu / total_insts) * 100:>10.2f}%")
-                p()
-            
-            # FP16/BF16 Instruction Counts (only if data present)
-            total_fp16_add = sum_across_ranks('fp16_add')
-            total_fp16_mul = sum_across_ranks('fp16_mul')
-            total_fp16_fma = sum_across_ranks('fp16_fma')
-            total_fp16_mfma = sum_across_ranks('fp16_mfma')
-            total_bf16_mfma = sum_across_ranks('bf16_mfma')
-            total_fp16_valu = total_fp16_add + total_fp16_mul + total_fp16_fma + total_fp16_mfma + total_bf16_mfma
-            
-            if total_fp16_valu > 0:
-                p("-" * 70)
-                p("FP16/BF16 Instruction Counts (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  FP16 ADD:        {total_fp16_add:>18,.0f}")
-                p(f"  FP16 MUL:        {total_fp16_mul:>18,.0f}")
-                p(f"  FP16 FMA:        {total_fp16_fma:>18,.0f}")
-                p(f"  FP16 MFMA:       {total_fp16_mfma:>18,.0f}")
-                p(f"  BF16 MFMA:       {total_bf16_mfma:>18,.0f}")
-                p(f"  ----------------------------------------")
-                p(f"  Total FP16/BF16: {total_fp16_valu:>18,.0f}")
-                p()
-                if total_valu > 0:
-                    p(f"FP16/BF16 %% of VALU:  {(total_fp16_valu / total_valu) * 100:>10.2f}%")
-                if total_insts > 0:
-                    p(f"FP16/BF16 %% of Total: {(total_fp16_valu / total_insts) * 100:>10.2f}%")
-                p()
-            
-            # Integer Instruction Counts (only if data present)
-            total_int32 = sum_across_ranks('int32_total')
-            total_int64 = sum_across_ranks('int64_total')
-            total_int_valu = total_int32 + total_int64
-            
-            if total_int_valu > 0:
-                p("-" * 70)
-                p("Integer Instruction Counts (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  INT32 VALU:      {total_int32:>18,.0f}")
-                p(f"  INT64 VALU:      {total_int64:>18,.0f}")
-                p(f"  ----------------------------------------")
-                p(f"  Total INT VALU:  {total_int_valu:>18,.0f}")
-                p()
-                if total_valu > 0:
-                    p(f"INT %% of VALU:    {(total_int_valu / total_valu) * 100:>10.2f}%")
-                if total_insts > 0:
-                    p(f"INT %% of Total:   {(total_int_valu / total_insts) * 100:>10.2f}%")
-                p()
-            
-            # Vector Memory (VMEM) Analysis (only if data present)
-            total_vmem_rd = sum_across_ranks('vmem_rd')
-            total_vmem_wr = sum_across_ranks('vmem_wr')
-            total_vmem_rd_cycles = sum_across_ranks('vmem_rd_cycles')
-            total_vmem_wr_cycles = sum_across_ranks('vmem_wr_cycles')
-            total_vmem = total_vmem_rd + total_vmem_wr
-            
-            if total_vmem > 0:
-                p("-" * 70)
-                p("Vector Memory (VMEM) Instructions (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  VMEM Reads:      {total_vmem_rd:>18,.0f}")
-                p(f"  VMEM Writes:     {total_vmem_wr:>18,.0f}")
-                p(f"  ----------------------------------------")
-                p(f"  Total VMEM:      {total_vmem:>18,.0f}")
-                p()
-                if total_insts > 0:
-                    p(f"VMEM Read %% of Total:   {(total_vmem_rd / total_insts) * 100:>10.2f}%")
-                    p(f"VMEM Write %% of Total:  {(total_vmem_wr / total_insts) * 100:>10.2f}%")
-                    p(f"VMEM Total %% of Total:  {(total_vmem / total_insts) * 100:>10.2f}%")
-                if total_vmem_wr > 0:
-                    p(f"Read/Write Ratio:        {total_vmem_rd / total_vmem_wr:>10.2f}")
-                p()
+            # FP32 Instruction Counts - show only if fp32 counter set was used
+            if counter_set == 'fp32':
+                total_fp32_add = sum_across_ranks('fp32_add')
+                total_fp32_mul = sum_across_ranks('fp32_mul')
+                total_fp32_fma = sum_across_ranks('fp32_fma')
+                total_fp32_trans = sum_across_ranks('fp32_trans')
+                total_fp32_mfma = sum_across_ranks('fp32_mfma')
+                total_fp32_valu = total_fp32_add + total_fp32_mul + total_fp32_fma + total_fp32_trans + total_fp32_mfma
                 
-                # Cycle/latency analysis (only if cycle data present)
-                # Note: These are ISSUE cycles (time to send addr/cmd), not full memory latency
-                if total_vmem_rd_cycles > 0 or total_vmem_wr_cycles > 0:
-                    p(f"  VMEM Read Issue Cycles:  {total_vmem_rd_cycles:>14,.0f}")
-                    p(f"  VMEM Write Issue Cycles: {total_vmem_wr_cycles:>14,.0f}")
+                if total_fp32_valu > 0:
+                    p("-" * 70)
+                    p("FP32 Instruction Counts (aggregated across all ranks)")
+                    p("-" * 70)
                     p()
-                    if total_vmem_rd > 0 and total_vmem_rd_cycles > 0:
-                        avg_rd_latency = total_vmem_rd_cycles / total_vmem_rd
-                        p(f"Avg Read Issue Time:    {avg_rd_latency:>10.1f} cycles/instr")
-                    if total_vmem_wr > 0 and total_vmem_wr_cycles > 0:
-                        avg_wr_latency = total_vmem_wr_cycles / total_vmem_wr
-                        p(f"Avg Write Issue Time:   {avg_wr_latency:>10.1f} cycles/instr")
-                    p(f"  (Issue time = cycles to send addr/cmd, not full memory latency)")
+                    p(f"  FP32 ADD:        {total_fp32_add:>18,.0f}")
+                    p(f"  FP32 MUL:        {total_fp32_mul:>18,.0f}")
+                    p(f"  FP32 FMA:        {total_fp32_fma:>18,.0f}")
+                    p(f"  FP32 Trans:      {total_fp32_trans:>18,.0f}")
+                    p(f"  FP32 MFMA:       {total_fp32_mfma:>18,.0f}")
+                    p(f"  ----------------------------------------")
+                    p(f"  Total FP32 VALU: {total_fp32_valu:>18,.0f}")
+                    p()
+                    if total_valu > 0:
+                        p(f"FP32 %% of VALU:   {(total_fp32_valu / total_valu) * 100:>10.2f}%")
+                    if total_insts > 0:
+                        p(f"FP32 %% of Total:  {(total_fp32_valu / total_insts) * 100:>10.2f}%")
                     p()
             
-            # SALU / Scalar Instructions (only if data present)
-            total_salu = sum_across_ranks('salu_total')
-            total_smem = sum_across_ranks('smem_total')
-            total_flat = sum_across_ranks('flat_total')
-            total_lds = sum_across_ranks('lds_total')
-            total_branch = sum_across_ranks('branch_total')
-            total_scalar = total_salu + total_smem
+            # FP16/BF16 Instruction Counts - show only if fp16 counter set was used
+            if counter_set == 'fp16':
+                total_fp16_add = sum_across_ranks('fp16_add')
+                total_fp16_mul = sum_across_ranks('fp16_mul')
+                total_fp16_fma = sum_across_ranks('fp16_fma')
+                total_fp16_mfma = sum_across_ranks('fp16_mfma')
+                total_bf16_mfma = sum_across_ranks('bf16_mfma')
+                total_fp16_valu = total_fp16_add + total_fp16_mul + total_fp16_fma + total_fp16_mfma + total_bf16_mfma
+                
+                if total_fp16_valu > 0:
+                    p("-" * 70)
+                    p("FP16/BF16 Instruction Counts (aggregated across all ranks)")
+                    p("-" * 70)
+                    p()
+                    p(f"  FP16 ADD:        {total_fp16_add:>18,.0f}")
+                    p(f"  FP16 MUL:        {total_fp16_mul:>18,.0f}")
+                    p(f"  FP16 FMA:        {total_fp16_fma:>18,.0f}")
+                    p(f"  FP16 MFMA:       {total_fp16_mfma:>18,.0f}")
+                    p(f"  BF16 MFMA:       {total_bf16_mfma:>18,.0f}")
+                    p(f"  ----------------------------------------")
+                    p(f"  Total FP16/BF16: {total_fp16_valu:>18,.0f}")
+                    p()
+                    if total_valu > 0:
+                        p(f"FP16/BF16 %% of VALU:  {(total_fp16_valu / total_valu) * 100:>10.2f}%")
+                    if total_insts > 0:
+                        p(f"FP16/BF16 %% of Total: {(total_fp16_valu / total_insts) * 100:>10.2f}%")
+                    p()
             
-            if total_salu > 0 or total_smem > 0:
-                p("-" * 70)
-                p("Scalar & Memory Instructions (aggregated across all ranks)")
-                p("-" * 70)
-                p()
-                p(f"  SALU (Scalar ALU): {total_salu:>18,.0f}")
-                p(f"  SMEM (Scalar Mem): {total_smem:>18,.0f}")
-                p(f"  FLAT:              {total_flat:>18,.0f}")
-                p(f"  LDS:               {total_lds:>18,.0f}")
-                p(f"  Branch:            {total_branch:>18,.0f}")
-                p(f"  ----------------------------------------")
-                p(f"  Total SALU+SMEM:   {total_scalar:>18,.0f}")
-                p()
-                if total_insts > 0:
-                    p(f"SALU %% of Total:    {(total_salu / total_insts) * 100:>10.2f}%")
-                    p(f"SMEM %% of Total:    {(total_smem / total_insts) * 100:>10.2f}%")
-                    p(f"FLAT %% of Total:    {(total_flat / total_insts) * 100:>10.2f}%")
-                    p(f"LDS %% of Total:     {(total_lds / total_insts) * 100:>10.2f}%")
-                    p(f"Branch %% of Total:  {(total_branch / total_insts) * 100:>10.2f}%")
-                p()
+            # Integer Instruction Counts - show only if int counter set was used
+            if counter_set == 'int':
+                total_int32 = sum_across_ranks('int32_total')
+                total_int64 = sum_across_ranks('int64_total')
+                total_int_valu = total_int32 + total_int64
+                
+                if total_int_valu > 0:
+                    p("-" * 70)
+                    p("Integer Instruction Counts (aggregated across all ranks)")
+                    p("-" * 70)
+                    p()
+                    p(f"  INT32 VALU:      {total_int32:>18,.0f}")
+                    p(f"  INT64 VALU:      {total_int64:>18,.0f}")
+                    p(f"  ----------------------------------------")
+                    p(f"  Total INT VALU:  {total_int_valu:>18,.0f}")
+                    p()
+                    if total_valu > 0:
+                        p(f"INT %% of VALU:    {(total_int_valu / total_valu) * 100:>10.2f}%")
+                    if total_insts > 0:
+                        p(f"INT %% of Total:   {(total_int_valu / total_insts) * 100:>10.2f}%")
+                    p()
             
-            # MFMA / GEMM Analysis
-            total_mfma = sum_across_ranks('mfma_total')
-            
-            # Get INT8 MFMA from CSV if available (FP32/FP16/BF16 already computed above)
-            total_int8_mfma = sum_across_ranks('int8_mfma')
-            
-            if total_mfma > 0 or total_fp64_mfma > 0:
-                p("-" * 70)
-                p("MFMA / GEMM Analysis")
-                p("-" * 70)
-                p()
+            # SALU / Scalar Instructions - show only if salu counter set was used
+            if counter_set == 'salu':
+                total_salu_c = sum_across_ranks('salu_total')
+                total_smem_c = sum_across_ranks('smem_total')
+                total_flat_c = sum_across_ranks('flat_total')
+                total_lds_c = sum_across_ranks('lds_total')
+                total_branch_c = sum_across_ranks('branch_total')
+                total_scalar = total_salu_c + total_smem_c
                 
-                # GEMM likelihood based on MFMA percentage of total instructions
-                # Using total_insts gives a better picture than VALU since VALU includes overhead
-                mfma_pct = (total_mfma / total_insts * 100) if total_insts > 0 else 0
-                
-                p(f"  Total MFMA:      {total_mfma:>18,.0f}")
-                if total_fp64_mfma > 0:
-                    p(f"    FP64 MFMA:     {total_fp64_mfma:>18,.0f}")
-                if total_fp32_mfma > 0:
-                    p(f"    FP32 MFMA:     {total_fp32_mfma:>18,.0f}")
-                if total_fp16_mfma > 0:
-                    p(f"    FP16 MFMA:     {total_fp16_mfma:>18,.0f}")
-                if total_bf16_mfma > 0:
-                    p(f"    BF16 MFMA:     {total_bf16_mfma:>18,.0f}")
-                if total_int8_mfma > 0:
-                    p(f"    INT8 MFMA:     {total_int8_mfma:>18,.0f}")
-                p()
-                
-                p(f"MFMA %% of Total:   {mfma_pct:>9.2f}%")
-                
-                # GEMM likelihood heuristic based on MFMA % of total instructions
-                # Even efficient GEMM typically shows 5-10% MFMA due to overhead
-                if mfma_pct >= 10:
-                    gemm_likelihood = "Very High"
-                    gemm_desc = "Workload is dominated by matrix operations (GEMM/convolution)"
-                elif mfma_pct >= 3:
-                    gemm_likelihood = "High"
-                    gemm_desc = "Significant matrix operation content"
-                elif mfma_pct >= 1:
-                    gemm_likelihood = "Moderate"
-                    gemm_desc = "Some matrix operations present"
-                elif mfma_pct > 0:
-                    gemm_likelihood = "Low"
-                    gemm_desc = "Minimal matrix operation content"
-                else:
-                    gemm_likelihood = "None"
-                    gemm_desc = "No MFMA instructions detected"
-                
-                p(f"GEMM Likelihood:   {gemm_likelihood}")
-                p(f"  ({gemm_desc})")
-                p()
-                
-                # Estimate TFLOPS from MFMA counts
-                # FLOPs per MFMA instruction (approximate, depends on specific instruction variant):
-                #   FP64 MFMA: 128 FLOPs (4x4x4 matrix = 64 FMA = 128 FLOPs)
-                #   FP32 MFMA: 512 FLOPs (16x16x4 matrix = 256 FMA = 512 FLOPs)
-                #   FP16/BF16 MFMA: 1024 FLOPs (16x16x16 or 32x32x8)
-                #   INT8 MFMA: 2048 OPs (32x32x16)
-                
-                # Get elapsed time for rate calculation
-                elapsed_times = [float(r.get('elapsed_seconds', 0)) for r in active_samples]
-                if elapsed_times:
-                    max_elapsed = max(elapsed_times)
-                    min_elapsed = min(elapsed_times)
-                    duration = max_elapsed - min_elapsed if len(elapsed_times) > 1 else max_elapsed
-                    
-                    if duration > 0:
-                        # Calculate estimated FLOPs
-                        est_fp64_flops = total_fp64_mfma * 128
-                        est_fp32_flops = total_fp32_mfma * 512
-                        est_fp16_flops = (total_fp16_mfma + total_bf16_mfma) * 1024
-                        est_int8_ops = total_int8_mfma * 2048
-                        
-                        total_est_flops = est_fp64_flops + est_fp32_flops + est_fp16_flops
-                        
-                        p("Estimated MFMA Performance:")
-                        p(f"  Duration:        {duration:>10.3f} seconds")
-                        
-                        if est_fp64_flops > 0:
-                            tflops_fp64 = est_fp64_flops / duration / 1e12
-                            p(f"  FP64 MFMA:       {tflops_fp64:>10.3f} TFLOPS")
-                        if est_fp32_flops > 0:
-                            tflops_fp32 = est_fp32_flops / duration / 1e12
-                            p(f"  FP32 MFMA:       {tflops_fp32:>10.3f} TFLOPS")
-                        if est_fp16_flops > 0:
-                            tflops_fp16 = est_fp16_flops / duration / 1e12
-                            p(f"  FP16/BF16 MFMA:  {tflops_fp16:>10.3f} TFLOPS")
-                        if est_int8_ops > 0:
-                            tops_int8 = est_int8_ops / duration / 1e12
-                            p(f"  INT8 MFMA:       {tops_int8:>10.3f} TOPS")
-                        
-                        if total_est_flops > 0:
-                            total_tflops = total_est_flops / duration / 1e12
-                            p(f"  ----------------------------------------")
-                            p(f"  Total MFMA:      {total_tflops:>10.3f} TFLOPS")
-                        
-                        p()
-                        p("  Note: TFLOPS estimates assume common MFMA instruction variants.")
-                        p("        Actual performance may vary based on specific instructions used.")
-                p()
+                if total_salu_c > 0 or total_smem_c > 0:
+                    p("-" * 70)
+                    p("Scalar & Memory Instructions (aggregated across all ranks)")
+                    p("-" * 70)
+                    p()
+                    p(f"  SALU (Scalar ALU): {total_salu_c:>18,.0f}")
+                    p(f"  SMEM (Scalar Mem): {total_smem_c:>18,.0f}")
+                    p(f"  FLAT:              {total_flat_c:>18,.0f}")
+                    p(f"  LDS:               {total_lds_c:>18,.0f}")
+                    p(f"  Branch:            {total_branch_c:>18,.0f}")
+                    p(f"  ----------------------------------------")
+                    p(f"  Total SALU+SMEM:   {total_scalar:>18,.0f}")
+                    p()
+                    if total_insts > 0:
+                        p(f"SALU %% of Total:    {(total_salu_c / total_insts) * 100:>10.2f}%")
+                        p(f"SMEM %% of Total:    {(total_smem_c / total_insts) * 100:>10.2f}%")
+                        p(f"FLAT %% of Total:    {(total_flat_c / total_insts) * 100:>10.2f}%")
+                        p(f"LDS %% of Total:     {(total_lds_c / total_insts) * 100:>10.2f}%")
+                        p(f"Branch %% of Total:  {(total_branch_c / total_insts) * 100:>10.2f}%")
+                    p()
         
         # Memory Analysis - compute per-rank HWMs then aggregate
-        has_memory_data = 'gpu_mem_used_mb' in all_rows[0] if all_rows else False
+        # Check for memory data - look for vram_hwm_mb (amd-smi) or cpu_resident_hwm_mb
+        has_memory_data = (
+            'vram_hwm_mb' in all_rows[0] or 
+            'gtt_hwm_mb' in all_rows[0] or
+            'cpu_resident_hwm_mb' in all_rows[0]
+        ) if all_rows else False
+        
         if has_memory_data:
-            p("-" * 70)
-            p("Memory Usage (aggregated across all ranks)")
-            p("-" * 70)
-            p()
-            
             # Group rows by source file (rank) and compute per-rank HWMs
             rank_rows = defaultdict(list)
             for row in all_rows:
@@ -941,21 +855,16 @@ def analyze_fp64_monitor_files(filenames):
             total_ranks = len(rank_rows)
             
             # Compute per-rank memory HWMs
-            per_rank_gpu_hwm = []
             per_rank_vram_hwm = []
             per_rank_gtt_hwm = []
             per_rank_cpu_hwm = []
-            gpu_total_per_rank = 0
             vram_total_per_rank = 0
             
             for filename, rows in rank_rows.items():
-                gpu_hwm = max((float(r.get('gpu_mem_hwm_mb', 0)) for r in rows), default=0)
                 vram_hwm = max((float(r.get('vram_hwm_mb', 0)) for r in rows), default=0)
                 gtt_hwm = max((float(r.get('gtt_hwm_mb', 0)) for r in rows), default=0)
                 cpu_hwm = max((float(r.get('cpu_resident_hwm_mb', 0)) for r in rows), default=0)
                 
-                if gpu_hwm > 0:
-                    per_rank_gpu_hwm.append(gpu_hwm)
                 if vram_hwm > 0:
                     per_rank_vram_hwm.append(vram_hwm)
                 if gtt_hwm > 0:
@@ -964,63 +873,57 @@ def analyze_fp64_monitor_files(filenames):
                     per_rank_cpu_hwm.append(cpu_hwm)
                 
                 # Get total memory (should be same for all samples in a rank)
-                gpu_totals = [float(r.get('gpu_mem_total_mb', 0)) for r in rows if float(r.get('gpu_mem_total_mb', 0)) > 0]
                 vram_totals = [float(r.get('vram_total_mb', 0)) for r in rows if float(r.get('vram_total_mb', 0)) > 0]
-                if gpu_totals:
-                    gpu_total_per_rank = gpu_totals[0]
                 if vram_totals:
                     vram_total_per_rank = vram_totals[0]
             
-            def rank_count_str(valid_ranks, total_ranks):
-                """Format rank count, noting if some ranks had no data."""
-                if valid_ranks == total_ranks:
-                    return f"{valid_ranks} ranks"
-                else:
-                    return f"{valid_ranks} of {total_ranks} ranks"
-            
-            if per_rank_gpu_hwm:
-                stats = compute_stats(per_rank_gpu_hwm)
-                total_hwm = sum(per_rank_gpu_hwm)
-                p(f"GPU Memory (HIP): {gpu_total_per_rank/1024:.1f} GB per rank")
-                p(f"  HWM Min:    {stats['min']:>10.1f} MB")
-                p(f"  HWM Max:    {stats['max']:>10.1f} MB")
-                p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
-                p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_gpu_hwm), total_ranks)})")
+            # Only show memory section if we have any memory data
+            has_any_memory = per_rank_vram_hwm or per_rank_gtt_hwm or per_rank_cpu_hwm
+            if has_any_memory:
+                p("-" * 70)
+                p("Memory Usage (aggregated across all ranks)")
+                p("-" * 70)
                 p()
-            
-            if per_rank_vram_hwm:
-                stats = compute_stats(per_rank_vram_hwm)
-                total_hwm = sum(per_rank_vram_hwm)
-                p(f"VRAM (rocm-smi): {vram_total_per_rank/1024:.1f} GB per rank")
-                p(f"  HWM Min:    {stats['min']:>10.1f} MB")
-                p(f"  HWM Max:    {stats['max']:>10.1f} MB")
-                p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
-                p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_vram_hwm), total_ranks)})")
-                p()
-            
-            if per_rank_gtt_hwm:
-                stats = compute_stats(per_rank_gtt_hwm)
-                total_hwm = sum(per_rank_gtt_hwm)
-                p(f"GTT (system memory for GPU):")
-                p(f"  HWM Min:    {stats['min']:>10.1f} MB")
-                p(f"  HWM Max:    {stats['max']:>10.1f} MB")
-                p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
-                p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_gtt_hwm), total_ranks)})")
-                p()
-            
-            if per_rank_cpu_hwm:
-                stats = compute_stats(per_rank_cpu_hwm)
-                total_hwm = sum(per_rank_cpu_hwm)
-                p(f"CPU Resident Memory:")
-                p(f"  HWM Min:    {stats['min']:>10.1f} MB")
-                p(f"  HWM Max:    {stats['max']:>10.1f} MB")
-                p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
-                p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_cpu_hwm), total_ranks)})")
-                p()
+                
+                def rank_count_str(valid_ranks, total_ranks):
+                    """Format rank count, noting if some ranks had no data."""
+                    if valid_ranks == total_ranks:
+                        return f"{valid_ranks} ranks"
+                    else:
+                        return f"{valid_ranks} of {total_ranks} ranks"
+                
+                if per_rank_vram_hwm:
+                    stats = compute_stats(per_rank_vram_hwm)
+                    total_hwm = sum(per_rank_vram_hwm)
+                    p(f"VRAM (GPU Memory): {vram_total_per_rank/1024:.1f} GB per rank")
+                    p(f"  HWM Min:    {stats['min']:>10.1f} MB")
+                    p(f"  HWM Max:    {stats['max']:>10.1f} MB")
+                    p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
+                    p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_vram_hwm), total_ranks)})")
+                    p()
+                
+                if per_rank_gtt_hwm:
+                    stats = compute_stats(per_rank_gtt_hwm)
+                    total_hwm = sum(per_rank_gtt_hwm)
+                    p(f"GTT (system memory for GPU):")
+                    p(f"  HWM Min:    {stats['min']:>10.1f} MB")
+                    p(f"  HWM Max:    {stats['max']:>10.1f} MB")
+                    p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
+                    p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_gtt_hwm), total_ranks)})")
+                    p()
+                
+                if per_rank_cpu_hwm:
+                    stats = compute_stats(per_rank_cpu_hwm)
+                    total_hwm = sum(per_rank_cpu_hwm)
+                    p(f"CPU Resident Memory:")
+                    p(f"  HWM Min:    {stats['min']:>10.1f} MB")
+                    p(f"  HWM Max:    {stats['max']:>10.1f} MB")
+                    p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
+                    p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_cpu_hwm), total_ranks)})")
+                    p()
         
         p("=" * 70)
         

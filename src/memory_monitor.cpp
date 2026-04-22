@@ -4,14 +4,7 @@
 #include <iomanip>
 #include <sstream>
 #include <unistd.h>
-
-// HIP includes
-#include <hip/hip_runtime.h>
-
-// ROCm SMI - optional, only compiled in if ENABLE_ROCM_SMI=ON at build time
-#ifdef HAVE_ROCM_SMI
-#include <rocm_smi/rocm_smi.h>
-#endif
+#include <vector>
 
 namespace measure_flops {
 
@@ -23,108 +16,132 @@ MemoryMonitor::MemoryMonitor() {
 }
 
 MemoryMonitor::~MemoryMonitor() {
-#ifdef HAVE_ROCM_SMI
-    // Note: We intentionally don't call rsmi_shut_down() here.
+#ifdef HAVE_AMD_SMI
+    // Note: We intentionally don't call amdsmi_shut_down() here.
     // When used as an ROCP_TOOL_LIBRARIES tool, the rocprofiler and HIP runtimes
     // may have already finalized by the time this destructor runs,
-    // and calling rsmi_shut_down can cause a segfault.
+    // and calling amdsmi_shut_down can cause a segfault.
     // The OS will clean up resources on process exit anyway.
-    rsmi_initialized_ = false;
+    smi_initialized_ = false;
 #endif
 }
 
-bool MemoryMonitor::initialize(int gpu_id, bool use_rocm_smi) {
+bool MemoryMonitor::initialize(int gpu_id, bool use_amd_smi) {
     gpu_id_ = gpu_id;
-    use_rocm_smi_ = use_rocm_smi;
+    use_amd_smi_ = use_amd_smi;
     
-    // Don't call hipSetDevice here - it may block if HIP isn't initialized yet
-    // We'll do lazy initialization on first sample
-    
-#ifdef HAVE_ROCM_SMI
-    // Defer rsmi_init to first query to avoid initialization order issues
-    // with ROCP_TOOL_LIBRARIES tools where other libraries may not be ready yet
-    rsmi_device_index_ = static_cast<uint32_t>(gpu_id);
-#endif
+    // AMD SMI initialization is deferred to first query to avoid initialization
+    // order issues with ROCP_TOOL_LIBRARIES tools
     
     initialized_ = true;
     return true;
 }
 
-void MemoryMonitor::query_hip_memory(MemoryStats& stats) {
-    size_t free_mem = 0, total_mem = 0;
-    
-    // Try to set device (may fail if HIP not ready)
-    hipError_t err = hipSetDevice(gpu_id_);
-    if (err != hipSuccess) {
-        // Fallback to device 0
-        err = hipSetDevice(0);
-        if (err != hipSuccess) {
-            stats.hip_valid = false;
+void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
+#ifdef HAVE_AMD_SMI
+    // Lazy initialization of AMD SMI
+    if (!smi_initialized_ && use_amd_smi_) {
+        amdsmi_status_t init_status = amdsmi_init(AMDSMI_INIT_AMD_GPUS);
+        if (init_status != AMDSMI_STATUS_SUCCESS) {
+            last_error_ = "amdsmi_init failed with status " + std::to_string(init_status);
+            stats.smi_valid = false;
             return;
         }
-    }
-    
-    err = hipMemGetInfo(&free_mem, &total_mem);
-    if (err == hipSuccess) {
-        stats.gpu_total = total_mem;
-        stats.gpu_free = free_mem;
-        stats.gpu_used = total_mem - free_mem;
-        stats.hip_valid = true;
-    } else {
-        stats.hip_valid = false;
-    }
-}
-
-void MemoryMonitor::query_rsmi_memory(MemoryStats& stats) {
-#ifdef HAVE_ROCM_SMI
-    // Lazy initialization of ROCm SMI
-    if (!rsmi_initialized_ && use_rocm_smi_) {
-        rsmi_status_t init_status = rsmi_init(0);
-        if (init_status == RSMI_STATUS_SUCCESS) {
-            rsmi_initialized_ = true;
+        
+        // Get socket handles
+        uint32_t socket_count = 0;
+        init_status = amdsmi_get_socket_handles(&socket_count, nullptr);
+        if (init_status != AMDSMI_STATUS_SUCCESS || socket_count == 0) {
+            last_error_ = "amdsmi_get_socket_handles failed: status=" + std::to_string(init_status) 
+                         + ", count=" + std::to_string(socket_count);
+            stats.smi_valid = false;
+            return;
+        }
+        
+        std::vector<amdsmi_socket_handle> sockets(socket_count);
+        init_status = amdsmi_get_socket_handles(&socket_count, sockets.data());
+        if (init_status != AMDSMI_STATUS_SUCCESS) {
+            last_error_ = "amdsmi_get_socket_handles (data) failed: " + std::to_string(init_status);
+            stats.smi_valid = false;
+            return;
+        }
+        
+        // Get processor (GPU) handles from first socket
+        uint32_t proc_count = 0;
+        init_status = amdsmi_get_processor_handles(sockets[0], &proc_count, nullptr);
+        if (init_status != AMDSMI_STATUS_SUCCESS || proc_count == 0) {
+            last_error_ = "amdsmi_get_processor_handles failed: status=" + std::to_string(init_status)
+                         + ", count=" + std::to_string(proc_count);
+            stats.smi_valid = false;
+            return;
+        }
+        
+        std::vector<amdsmi_processor_handle> processors(proc_count);
+        init_status = amdsmi_get_processor_handles(sockets[0], &proc_count, processors.data());
+        if (init_status != AMDSMI_STATUS_SUCCESS) {
+            last_error_ = "amdsmi_get_processor_handles (data) failed: " + std::to_string(init_status);
+            stats.smi_valid = false;
+            return;
+        }
+        
+        // Store the processor handle for the requested GPU
+        if (static_cast<uint32_t>(gpu_id_) < proc_count) {
+            processor_handle_ = processors[gpu_id_];
+            smi_initialized_ = true;
+            last_error_.clear();
         } else {
-            stats.rsmi_valid = false;
+            last_error_ = "GPU " + std::to_string(gpu_id_) + " not found, only " 
+                         + std::to_string(proc_count) + " GPUs available";
+            stats.smi_valid = false;
             return;
         }
+    }
+    
+    if (!smi_initialized_) {
+        if (last_error_.empty()) {
+            last_error_ = "AMD SMI not initialized (use_amd_smi=" + std::to_string(use_amd_smi_) + ")";
+        }
+        stats.smi_valid = false;
+        return;
     }
     
     uint64_t total = 0, used = 0;
-    rsmi_status_t status;
+    amdsmi_status_t status;
     
     // Query VRAM (GPU dedicated memory)
-    status = rsmi_dev_memory_total_get(rsmi_device_index_, RSMI_MEM_TYPE_VRAM, &total);
-    if (status == RSMI_STATUS_SUCCESS) {
+    status = amdsmi_get_gpu_memory_total(processor_handle_, AMDSMI_MEM_TYPE_VRAM, &total);
+    if (status == AMDSMI_STATUS_SUCCESS) {
         stats.vram_total = total;
-        status = rsmi_dev_memory_usage_get(rsmi_device_index_, RSMI_MEM_TYPE_VRAM, &used);
-        if (status == RSMI_STATUS_SUCCESS) {
+        status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_VRAM, &used);
+        if (status == AMDSMI_STATUS_SUCCESS) {
             stats.vram_used = used;
         }
     }
     
     // Query visible VRAM (GPU memory visible to CPU)
-    status = rsmi_dev_memory_total_get(rsmi_device_index_, RSMI_MEM_TYPE_VIS_VRAM, &total);
-    if (status == RSMI_STATUS_SUCCESS) {
+    status = amdsmi_get_gpu_memory_total(processor_handle_, AMDSMI_MEM_TYPE_VIS_VRAM, &total);
+    if (status == AMDSMI_STATUS_SUCCESS) {
         stats.vis_vram_total = total;
-        status = rsmi_dev_memory_usage_get(rsmi_device_index_, RSMI_MEM_TYPE_VIS_VRAM, &used);
-        if (status == RSMI_STATUS_SUCCESS) {
+        status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_VIS_VRAM, &used);
+        if (status == AMDSMI_STATUS_SUCCESS) {
             stats.vis_vram_used = used;
         }
     }
     
     // Query GTT (Graphics Translation Table - system memory accessible by GPU)
-    status = rsmi_dev_memory_total_get(rsmi_device_index_, RSMI_MEM_TYPE_GTT, &total);
-    if (status == RSMI_STATUS_SUCCESS) {
+    status = amdsmi_get_gpu_memory_total(processor_handle_, AMDSMI_MEM_TYPE_GTT, &total);
+    if (status == AMDSMI_STATUS_SUCCESS) {
         stats.gtt_total = total;
-        status = rsmi_dev_memory_usage_get(rsmi_device_index_, RSMI_MEM_TYPE_GTT, &used);
-        if (status == RSMI_STATUS_SUCCESS) {
+        status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_GTT, &used);
+        if (status == AMDSMI_STATUS_SUCCESS) {
             stats.gtt_used = used;
         }
     }
     
-    stats.rsmi_valid = (stats.vram_total > 0);
+    stats.smi_valid = (stats.vram_total > 0);
 #else
     (void)stats;  // Suppress unused parameter warning
-    stats.rsmi_valid = false;
+    stats.smi_valid = false;
 #endif
 }
 
@@ -177,10 +194,7 @@ void MemoryMonitor::query_cpu_memory(MemoryStats& stats) {
 }
 
 void MemoryMonitor::update_high_water_marks(const MemoryStats& stats) {
-    if (stats.hip_valid && stats.gpu_used > hwm_.gpu_used_hwm) {
-        hwm_.gpu_used_hwm = stats.gpu_used;
-    }
-    if (stats.rsmi_valid) {
+    if (stats.smi_valid) {
         if (stats.vram_used > hwm_.vram_used_hwm) {
             hwm_.vram_used_hwm = stats.vram_used;
         }
@@ -205,7 +219,7 @@ void MemoryMonitor::shutdown() {
     
     // Mark as not initialized to prevent future queries
     initialized_ = false;
-    rsmi_initialized_ = false;
+    smi_initialized_ = false;
 }
 
 MemoryStats MemoryMonitor::sample() {
@@ -224,14 +238,12 @@ MemoryStats MemoryMonitor::sample() {
         return stats;
     }
     
-    query_hip_memory(stats);
-    query_rsmi_memory(stats);
+    query_smi_memory(stats);
     query_cpu_memory(stats);
     
     update_high_water_marks(stats);
     
     // Copy current HWM values to stats
-    stats.gpu_used_hwm = hwm_.gpu_used_hwm;
     stats.vram_used_hwm = hwm_.vram_used_hwm;
     stats.gtt_used_hwm = hwm_.gtt_used_hwm;
     stats.cpu_resident_hwm = hwm_.cpu_resident_hwm;
