@@ -18,6 +18,7 @@ project(measure_flops VERSION 1.0.0 LANGUAGES CXX HIP)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 
 # Copy HIP flags from CXX if not set
 foreach(_TYPE DEBUG MINSIZEREL RELEASE RELWITHDEBINFO)
@@ -166,12 +167,13 @@ target_compile_options(measure_flops PRIVATE
 )
 
 # Tool library for ROCP_TOOL_LIBRARIES injection
-add_library(fp64_monitor_tool SHARED 
+set(LIBNAME fp64_monitor_tool_${ROCM_VERSION_STRING})
+add_library(${LIBNAME} SHARED 
     tools/fp64_monitor_tool.cpp
     tools/preload.cpp
 )
 
-target_link_libraries(fp64_monitor_tool
+target_link_libraries(${LIBNAME}
     PRIVATE
         measure_flops_lib
         rocprofiler-sdk::rocprofiler-sdk
@@ -179,20 +181,20 @@ target_link_libraries(fp64_monitor_tool
         ${CMAKE_DL_LIBS}
 )
 
-target_compile_options(fp64_monitor_tool PRIVATE
+target_compile_options(${LIBNAME} PRIVATE
     -Wall -Wextra
 )
 
-target_compile_definitions(fp64_monitor_tool PRIVATE
+target_compile_definitions(${LIBNAME} PRIVATE
     ROCM_VERSION_STRING="${ROCM_VERSION_STRING}"
     FP64_MONITOR_VERSION="${PROJECT_VERSION}"
     $<$<BOOL:${HAVE_AMD_SMI}>:HAVE_AMD_SMI>
 )
 
-set_target_properties(fp64_monitor_tool PROPERTIES
+set_target_properties(${LIBNAME} PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
-    INSTALL_RPATH_USE_LINK_PATH TRUE
+    INSTALL_RPATH_USE_LINK_PATH ON
 )
 
 # Optional: Build tests
@@ -202,20 +204,23 @@ if(BUILD_TESTS)
 endif()
 
 # Install targets
-install(TARGETS measure_flops measure_flops_lib fp64_monitor_tool
+install(TARGETS measure_flops ${LIBNAME}
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
+CONFIGURE_FILE(${PROJECT_SOURCE_DIR}/tools/fp64_monitor.sh
+    ${PROJECT_BINARY_DIR}/tools/fp64_monitor.sh @ONLY)
+
 # Install wrapper script and analysis tools
-install(PROGRAMS tools/fp64_monitor.sh
+install(PROGRAMS ${PROJECT_BINARY_DIR}/tools/fp64_monitor.sh
     DESTINATION bin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-install(PROGRAMS tests/analyze_results.py tests/plot_timeseries.py
+install(PROGRAMS tests/analyze_results.py tests/plot_timeseries.py scripts/job.flux
     DESTINATION bin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )

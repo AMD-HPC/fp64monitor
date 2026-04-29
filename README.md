@@ -7,7 +7,7 @@ A C++ utility to monitor GPU instruction usage on AMD GPUs using the rocprofiler
 - Periodic hardware counter sampling for HIP applications
 - Multiple counter sets: FP64, FP32, FP16, INT, SALU, and high-level instruction mix
 - Multiple output formats: text, CSV, JSON
-- Works via ROCP_TOOL_LIBRARIES for any HIP application
+- Works via `ROCP_TOOL_LIBRARIES` for any HIP application
 - MPI-aware output file naming (auto-detects rank)
 - Build-time ROCm version recording
 - Memory monitoring (GPU and CPU):
@@ -32,7 +32,7 @@ This tool supports both ROCm 6.x and ROCm 7.x through a compatibility layer that
 
 The tool automatically detects and uses the appropriate API at compile time.
 
-### Optional: SYS_PERFMON
+### Optional: `SYS_PERFMON`
 
 You may see this warning during execution:
 
@@ -59,7 +59,7 @@ make -j$(nproc)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `ENABLE_AMD_SMI` | ON | Enable AMD SMI memory monitoring (requires libamd_smi) |
+| `ENABLE_AMD_SMI` | ON | Enable AMD SMI memory monitoring (requires `libamd_smi`) |
 | `BUILD_TESTS` | ON | Build test programs |
 
 Example without AMD SMI support:
@@ -73,7 +73,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_AMD_SMI=OFF
 
 ### Wrapper Script (Recommended)
 
-The easiest way to use fp64_monitor is with the wrapper script:
+The easiest way to use `fp64_monitor` is with the wrapper script:
 
 ```bash
 # Basic usage
@@ -96,7 +96,7 @@ fp64_monitor.sh --counters highlevel --use-amdsmi -- ./my_app
 | `--interval MS` | Sampling interval in ms (default: 1000) |
 | `--output PATTERN` | Output file pattern (default: auto) |
 | `--format FORMAT` | Output format: csv, json, text (default: csv) |
-| `--dir DIR` | Output directory (default: fp64_monitor_output) |
+| `--dir DIR` | Output directory (default: `fp64_monitor_output`) |
 | `--gpu ID` | GPU ID to monitor (default: 0) |
 | `--tmpdir DIR` | Fast local storage for temp output (e.g., /dev/shm) |
 | `--use-amdsmi` | Enable AMD SMI memory monitoring (VRAM/GTT) |
@@ -123,11 +123,11 @@ ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool.so ./your_hip_app
 | `FP64_MONITOR_GPU` | 0 | GPU ID to monitor |
 | `FP64_MONITOR_OUTPUT` | auto | Output file pattern (see below) |
 | `FP64_MONITOR_FORMAT` | csv | Output format: text, csv, json |
-| `FP64_MONITOR_DIR` | fp64_monitor_output | Output directory |
+| `FP64_MONITOR_DIR` | `fp64_monitor_output` | Output directory |
 | `FP64_MONITOR_TMPDIR` | (none) | Fast local storage for temp files (e.g., /dev/shm) |
 | `FP64_MONITOR_COUNTERS` | fp64 | Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2 |
 | `FP64_MONITOR_USE_AMDSMI` | 0 | Enable AMD SMI memory monitoring (1=enabled) |
-| `FP64_MONITOR_PRELOAD` | 0 | Enable LD_PRELOAD wrapper for clean shutdown (1=enabled) |
+| `FP64_MONITOR_PRELOAD` | 0 | Enable `LD_PRELOAD` wrapper for clean shutdown (1=enabled) |
 | `FP64_MONITOR_ANALYZE` | 1 | Auto-analyze results after run (0=disabled) |
 | `FP64_MONITOR_VERBOSE` | 0 | Verbose output (1=enabled) |
 
@@ -139,7 +139,7 @@ By default, each process writes to a unique file:
 - **With MPI**: `fp64_monitor_<rank>.csv` (e.g., `fp64_monitor_0.csv`)
 - **Without MPI**: `fp64_monitor_<hostname>_<pid>.csv`
 
-MPI rank is auto-detected from environment variables (SLURM_PROCID, OMPI_COMM_WORLD_RANK, PMI_RANK, etc.).
+MPI rank is auto-detected from environment variables (`SLURM_PROCID`, `OMPI_COMM_WORLD_RANK`, `PMI_RANK`, etc.).
 
 Custom patterns are supported:
 - `%r` = MPI rank (or "norank" if not detected)
@@ -339,7 +339,7 @@ Provides a broad overview of instruction categories:
 
 ## Analysis Tools
 
-### analyze_results.py
+### `analyze_results.py`
 
 Aggregates CSV output files and generates a summary report. Automatically run by the wrapper script after the application exits (disable with `--no-analyze`).
 
@@ -354,7 +354,7 @@ Features:
 - Reports instruction counts specific to the counter set used
 - Memory high-water marks (VRAM, GTT, CPU) when available
 
-### plot_timeseries.py
+### `plot_timeseries.py`
 
 Generates time-series visualizations of the instruction mix over time.
 
@@ -462,7 +462,7 @@ The tool monitors memory usage from multiple sources when `--use-amdsmi` is enab
 | High Water Marks | `*_hwm_mb` columns | Peak usage during application run |
 
 **Notes:**
-- AMD SMI support is enabled by default at build time (requires libamd_smi)
+- AMD SMI support is enabled by default at build time (requires `libamd_smi`)
 - Memory stats are collected even when counter sampling fails
 - On APU systems (like MI300A), GPU and CPU share the same physical memory
 - Use `--use-amdsmi` to enable GPU memory monitoring at runtime

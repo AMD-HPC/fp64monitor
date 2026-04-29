@@ -5,13 +5,19 @@
 #flux: -l
 
 flux env
+jid=`flux getattr jobid`
 
 export HSA_XNACK=1
-rm -rf fp64_monitor_output
-flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install-6.4.3/bin/fp64_monitor.sh --quiet --interval 100 --counters fp64 --dir fp64 -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
-#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install-6.4.3/bin/fp64_monitor.sh --quiet --interval 100 --counters fp32 --dir fp32 -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
-#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install-6.4.3/bin/fp64_monitor.sh --quiet --interval 100 --counters int --dir int -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
-#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install-6.4.3/bin/fp64_monitor.sh --quiet --interval 100 --counters salu --dir salu -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
+
+# Insert the monitor between flux arguments and executable name / arguments, ending with "--"
+# Customize the output directory with flux job ID and step ID because tool will overwrite the directory otherwise
+flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 \
+./install/bin/fp64_monitor.sh --quiet --interval 100 --counters fp64 --version 6.4.3 --dir fp64_${jid}_{{id}} -- \
+./install-6.4.3/bin/stream_triad_fp64 16777216 1000
+
+#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install/bin/fp64_monitor.sh --quiet --interval 100 --counters fp32 --version 6.4.3 --dir fp32_${jid}_{{id}} -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
+#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install/bin/fp64_monitor.sh --quiet --interval 100 --counters int --version 6.4.3 --dir int_${jid}_{{id}} -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
+#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install/bin/fp64_monitor.sh --quiet --interval 100 --counters salu --version 6.4.3 --dir salu_${jid}_{{id}} -- ./install-6.4.3/bin/stream_triad_fp64 16777216 1000
 #export FP64_MONITOR_INTERVAL=100
-#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install-6.4.3/bin/fp64_monitor.sh ./install-6.4.3/bin/test_mfma_direct
+#flux run -N 1 -n 4 -c 16 -g 1 -x --unbuffered --verbose --setopt=mpibind=verbose:1 ./install/bin/fp64_monitor.sh --version 6.4.3  -- ./install-6.4.3/bin/test_mfma_direct
 
