@@ -240,7 +240,8 @@ export FP64_MONITOR_INTERVAL="${FP64_MONITOR_INTERVAL:-1000}"
 # Determine script directory and library path
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-# Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library)
+# Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library).
+# Shared library from CMake target fp64_monitor_tool_${ROCM_VERSION_STRING} -> libfp64_monitor_tool_${ROCM_VERSION_STRING}.so
 LIB_PATH="${SCRIPT_DIR}/../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so"
 
 if [ ! -f "${LIB_PATH}" ]; then

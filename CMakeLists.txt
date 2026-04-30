@@ -33,7 +33,7 @@ find_package(Threads REQUIRED)
 find_package(hip REQUIRED)
 
 # Option to enable AMD SMI support (enabled by default - will auto-detect library)
-option(ENABLE_AMD_SMI "Enable AMD SMI memory monitoring support (requires libamd_smi)" ON)
+option(ENABLE_AMD_SMI "Enable AMD SMI memory monitoring support (requires libamd_smi)" OFF)
 
 # AMD SMI support - only search if enabled
 set(HAVE_AMD_SMI FALSE)

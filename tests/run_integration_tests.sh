@@ -12,6 +12,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${1:-${SCRIPT_DIR}/../build}"
 
+# Tool library: CMake emits libfp64_monitor_tool_<rocm-version>.so (legacy unversioned name still accepted)
+shopt -s nullglob
+MONITOR_CAND=( "${BUILD_DIR}"/libfp64_monitor_tool_*.so )
+shopt -u nullglob
+MONITOR_LIB=""
+if [ ${#MONITOR_CAND[@]} -ge 1 ]; then
+    MONITOR_LIB="${MONITOR_CAND[0]}"
+elif [ -f "${BUILD_DIR}/libfp64_monitor_tool.so" ]; then
+    MONITOR_LIB="${BUILD_DIR}/libfp64_monitor_tool.so"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -39,8 +50,8 @@ info() {
 check_prerequisites() {
     info "Checking prerequisites..."
     
-    if [ ! -f "${BUILD_DIR}/libfp64_monitor_tool.so" ]; then
-        fail "libfp64_monitor_tool.so not found in ${BUILD_DIR}"
+    if [ -z "${MONITOR_LIB}" ] || [ ! -f "${MONITOR_LIB}" ]; then
+        fail "libfp64_monitor_tool_*.so (or libfp64_monitor_tool.so) not found in ${BUILD_DIR}"
     fi
     
     if [ ! -f "${BUILD_DIR}/tests/stream_triad_fp64" ]; then
@@ -79,7 +90,7 @@ test_basic_execution() {
     FP64_MONITOR_OUTPUT="${output_file}" \
     FP64_MONITOR_INTERVAL=50 \
     FP64_MONITOR_FORMAT=csv \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 5 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     if [ -f "${output_file}" ]; then
@@ -105,7 +116,7 @@ test_csv_format() {
     FP64_MONITOR_OUTPUT="${output_file}" \
     FP64_MONITOR_INTERVAL=50 \
     FP64_MONITOR_FORMAT=csv \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 5 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     # Check header has expected columns
@@ -130,7 +141,7 @@ test_json_format() {
     FP64_MONITOR_OUTPUT="${output_file}" \
     FP64_MONITOR_INTERVAL=50 \
     FP64_MONITOR_FORMAT=json \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 5 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     # Check if it's valid JSON (basic check)
@@ -152,7 +163,7 @@ test_text_format() {
     FP64_MONITOR_OUTPUT="${output_file}" \
     FP64_MONITOR_INTERVAL=50 \
     FP64_MONITOR_FORMAT=text \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 5 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     if [ -f "${output_file}" ] && [ -s "${output_file}" ]; then
@@ -171,7 +182,7 @@ test_stdout_output() {
     local output=$(FP64_MONITOR_OUTPUT=stdout \
                    FP64_MONITOR_INTERVAL=100 \
                    FP64_MONITOR_FORMAT=csv \
-                   ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+                   ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
                    timeout 3 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true)
     
     if echo "$output" | grep -q "sample_id"; then
@@ -192,7 +203,7 @@ test_default_filename() {
     
     FP64_MONITOR_INTERVAL=50 \
     FP64_MONITOR_FORMAT=csv \
-    ROCP_TOOL_LIBRARIES="${abs_build_dir}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 3 "${abs_build_dir}/tests/stream_triad_fp64" 2>&1 || true
     
     local default_files=$(ls fp64_monitor_*.csv 2>/dev/null | wc -l)
@@ -218,7 +229,7 @@ test_filename_pattern() {
     # Test %p pattern
     FP64_MONITOR_OUTPUT="${pid_pattern}" \
     FP64_MONITOR_INTERVAL=100 \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 2 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     if ls /tmp/fp64_pid_*.csv 2>/dev/null | grep -v '%p' | head -1 > /dev/null; then
@@ -231,7 +242,7 @@ test_filename_pattern() {
     # Test %h pattern
     FP64_MONITOR_OUTPUT="${hostname_pattern}" \
     FP64_MONITOR_INTERVAL=100 \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 2 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     if ls /tmp/fp64_host_*.csv 2>/dev/null | grep -v '%h' | head -1 > /dev/null; then
@@ -248,7 +259,7 @@ test_version_output() {
     
     local stderr_output=$(FP64_MONITOR_OUTPUT=/dev/null \
                           FP64_MONITOR_INTERVAL=200 \
-                          ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+                          ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
                           timeout 2 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true)
     
     if echo "$stderr_output" | grep -q "FP64 Monitor.*v"; then
@@ -272,7 +283,7 @@ test_summary_output() {
     
     FP64_MONITOR_OUTPUT="${output_file}" \
     FP64_MONITOR_INTERVAL=50 \
-    ROCP_TOOL_LIBRARIES="${BUILD_DIR}/libfp64_monitor_tool.so" \
+    ROCP_TOOL_LIBRARIES="${MONITOR_LIB}" \
     timeout 3 "${BUILD_DIR}/tests/stream_triad_fp64" 2>&1 || true
     
     # Check for summary comment at end
