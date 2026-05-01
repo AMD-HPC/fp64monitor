@@ -26,6 +26,7 @@ if type -p flux &> /dev/null; then
     OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}${OUTPUT_DIR_POSTFIX}"
     export FP64_MONITOR_DIR=${OUTPUT_DIR}
 fi
+SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
 
 set -e
 
@@ -226,9 +227,9 @@ while [[ $# -gt 0 ]]; do
             break
             ;;
         -*)
-            echo "Error: Unknown option: $1" >&2
-            echo "Or, did you forget \"--\" at the end of the fp64_monitor.sh arguments?" >&2
-            echo "Use --help for usage information" >&2
+            echo "$SCRIPT_NAME: Error: Unknown option: $1" >&2
+            echo "$SCRIPT_NAME: Or, did you forget \"--\" at the end of the fp64_monitor.sh arguments?" >&2
+            echo "$SCRIPT_NAME: Use --help for usage information" >&2
             exit 1
             ;;
         *)
@@ -270,7 +271,6 @@ MPI_RANK=$(get_mpi_rank)
 
 if [ $VERSION_PROVIDED -eq 0 ] ; then
     failed=0
-    SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
     # Attempt to identify the executable requirements
     executable=$(echo $APP_ARGS | awk '{print $1}')
     # Grep will set an error condition on failure, so don't exit :D
@@ -300,13 +300,26 @@ if [ $VERSION_PROVIDED -eq 0 ] ; then
     fi
 fi
 
+MAJOR="${ROCM_VERSION_STRING%%.*}"
+if [ "$MAJOR" -eq "7" ] ; then
+    ROCM_VERSION_STRING=7.2.1
+elif [ "$MAJOR" -eq "6" ] ; then
+    ROCM_VERSION_STRING=6.4.3
+else
+    if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
+        echo "$SCRIPT_NAME: Only major versions 6 and 7 are supported." >&2
+    fi
+fi
+
 # Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library).
 # Shared library from CMake target fp64_monitor_tool_${ROCM_VERSION_STRING} -> libfp64_monitor_tool_${ROCM_VERSION_STRING}.so
 LIB_PATH="${SCRIPT_DIR}/../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so"
 
 if [ ! -f "${LIB_PATH}" ]; then
-    echo "Error: libfp64_monitor_tool_${ROCM_VERSION_STRING}.so not found at ${LIB_PATH}" >&2
-    echo "Please ensure the tool is properly installed." >&2
+    if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
+        echo "$SCRIPT_NAME: Error: libfp64_monitor_tool_${ROCM_VERSION_STRING}.so not found at ${LIB_PATH}" >&2
+        echo "$SCRIPT_NAME: Please ensure the tool is properly installed." >&2
+    fi
     exit 1
 fi
 
@@ -335,8 +348,8 @@ fi
 
 # Check if we have an application to run
 if [ ${#APP_ARGS[@]} -eq 0 ]; then
-    echo "Error: No application specified" >&2
-    echo "Use --help for usage information" >&2
+    echo "$SCRIPT_NAME: Error: No application specified" >&2
+    echo "$SCRIPT_NAME: Use --help for usage information" >&2
     exit 1
 fi
 
