@@ -13,6 +13,19 @@
 # For detailed help: fp64_monitor.sh --fullhelp
 #
 
+# Use patched nohwloc libfabric instead of /lib64 version to prevent exit crash -JCG 5/1/26
+export LD_LIBRARY_PATH="/usr/tce/packages/libfabric/libfabric-2.3.1nohwloc/lib64:${LD_LIBRARY_PATH}"
+
+ROCM_VERSION_STRING=@ROCM_VERSION_STRING@
+INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
+OUTPUT_DIR_POSTFIX=""
+if type -p flux &> /dev/null; then
+    jid=`flux getattr jobid`
+    OUTPUT_DIR_POSTFIX="_${jid}"
+    OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}${OUTPUT_DIR_POSTFIX}"
+    export FP64_MONITOR_DIR=${OUTPUT_DIR}
+fi
+
 set -e
 
 # Show brief help message (command line arguments only)
@@ -26,6 +39,7 @@ Options:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
+  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpu ID              GPU ID to monitor (default: 0)
   --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
@@ -52,6 +66,7 @@ GENERAL OPTIONS:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
+  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpu ID              GPU ID to monitor (default: 0, or ROCR_VISIBLE_DEVICES)
   --verbose             Enable verbose output and rocprofiler-sdk logging
@@ -160,6 +175,10 @@ while [[ $# -gt 0 ]]; do
             export FP64_MONITOR_FORMAT="$2"
             shift 2
             ;;
+        --rocm)
+            export ROCM_VERSION_STRING="$2"
+            shift 2
+            ;;
         --dir)
             export FP64_MONITOR_DIR="$2"
             shift 2
@@ -217,17 +236,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+
 # Set defaults for any unset variables
 export FP64_MONITOR_INTERVAL="${FP64_MONITOR_INTERVAL:-1000}"
 
 # Determine script directory and library path
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-# Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library)
-LIB_PATH="${SCRIPT_DIR}/../lib/libfp64_monitor_tool.so"
+# Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library).
+# Shared library from CMake target fp64_monitor_tool_${ROCM_VERSION_STRING} -> libfp64_monitor_tool_${ROCM_VERSION_STRING}.so
+LIB_PATH="${SCRIPT_DIR}/../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so"
 
 if [ ! -f "${LIB_PATH}" ]; then
-    echo "Error: libfp64_monitor_tool.so not found at ${LIB_PATH}" >&2
+    echo "Error: libfp64_monitor_tool_${ROCM_VERSION_STRING}.so not found at ${LIB_PATH}" >&2
     echo "Please ensure the tool is properly installed." >&2
     exit 1
 fi
@@ -313,10 +334,10 @@ if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; th
     
     # Find the analyze script
     ANALYZE_SCRIPT=""
-    for path in "${SCRIPT_DIR}/analyze_results.py" \
-                "${SCRIPT_DIR}/../bin/analyze_results.py" \
-                "${SCRIPT_DIR}/../tests/analyze_results.py" \
-                "${SCRIPT_DIR}/tests/analyze_results.py"; do
+    for path in "${SCRIPT_DIR}/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/../bin/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/../tests/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/tests/fp64_monitor_analyze_results.py"; do
         if [ -f "${path}" ]; then
             ANALYZE_SCRIPT="${path}"
             break
@@ -324,12 +345,11 @@ if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; th
     done
     
     # Find output files (check subdirectory first, then current directory for backwards compatibility)
-    OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}"
     FILES_DIR=""
-    if [ -d "${OUTPUT_DIR}" ]; then
-        OUTPUT_FILES=$(ls "${OUTPUT_DIR}"/fp64_monitor_*.csv 2>/dev/null || true)
+    if [ -d "${FP64_MONITOR_DIR}" ]; then
+        OUTPUT_FILES=$(ls "${FP64_MONITOR_DIR}"/fp64_monitor_*.csv 2>/dev/null || true)
         if [ -n "${OUTPUT_FILES}" ]; then
-            FILES_DIR="${OUTPUT_DIR}"
+            FILES_DIR="${FP64_MONITOR_DIR}"
         fi
     fi
     # Fallback to current directory

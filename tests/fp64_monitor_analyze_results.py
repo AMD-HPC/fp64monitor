@@ -3,8 +3,8 @@
 Analyze FP64 Monitor CSV output files.
 
 Usage:
-    python3 analyze_results.py <csv_file> [csv_file2 ...]
-    python3 analyze_results.py fp64_monitor_*.csv
+    python3 fp64_monitor_analyze_results.py <csv_file> [csv_file2 ...]
+    python3 fp64_monitor_analyze_results.py fp64_monitor_*.csv
     
 When multiple files are provided (e.g., from MPI runs), data is aggregated
 across all ranks and a single combined summary is reported.
@@ -999,8 +999,8 @@ def detect_format(filename):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: analyze_results.py <csv_file> [csv_file2 ...]")
-        print("       analyze_results.py fp64_monitor_*.csv")
+        print("Usage: fp64_monitor_analyze_results.py <csv_file> [csv_file2 ...]")
+        print("       fp64_monitor_analyze_results.py fp64_monitor_*.csv")
         print()
         print("When multiple files are provided, data is aggregated across all ranks.")
         print("Files from the same (hostname, GPU) are deduplicated to avoid double-counting.")

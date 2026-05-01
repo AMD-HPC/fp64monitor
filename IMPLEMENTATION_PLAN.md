@@ -37,7 +37,7 @@ measure_flops/
     ├── README.md                       # Test documentation
     ├── stream_triad_fp64.hip           # FP64 validation test (HIP)
     ├── validate_counters.sh            # Automated validation script
-    ├── analyze_results.py              # Counter analysis helper
+    ├── fp64_monitor_analyze_results.py # Counter analysis helper
     └── test_instruction_analyzer.cpp   # Unit tests
 ```
 
@@ -49,7 +49,7 @@ The `tests/` directory contains validation programs with known FP64 instruction 
 |---------|---------|--------|
 | `stream_triad_fp64.hip` | STREAM Triad with multiple FP64 kernel variants | ✓ Implemented |
 | `validate_counters.sh` | Automated build and rocprofv3 validation | ✓ Implemented |
-| `analyze_results.py` | Parse and analyze counter CSV output | ✓ Implemented |
+| `fp64_monitor_analyze_results.py` | Parse and analyze counter CSV output | ✓ Implemented |
 
 **Validation Results (MI300A):**
 ```

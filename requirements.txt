@@ -4,8 +4,8 @@
 #
 # Note: Python 3.8+ is required
 
-# For PDF chart generation (plot_timeseries.py)
+# For PDF chart generation (fp64_monitor_plot_timeseries.py)
 matplotlib>=3.5.0
 
-# For interactive HTML chart generation (plot_timeseries.py --html)
+# For interactive HTML chart generation (fp64_monitor_plot_timeseries.py --html)
 plotly>=5.0.0
