@@ -13,6 +13,9 @@
 # For detailed help: fp64_monitor.sh --fullhelp
 #
 
+# Use patched nohwloc libfabric instead of /lib64 version to prevent exit crash -JCG 5/1/26
+export LD_LIBRARY_PATH="/usr/tce/packages/libfabric/libfabric-2.3.1nohwloc/lib64:${LD_LIBRARY_PATH}"
+
 ROCM_VERSION_STRING=@ROCM_VERSION_STRING@
 INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
@@ -36,7 +39,7 @@ Options:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --version VERSION     ROCm version (default: @ROCM_VERSION_STRING@)
+  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpu ID              GPU ID to monitor (default: 0)
   --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
@@ -63,7 +66,7 @@ GENERAL OPTIONS:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --version VERSION     ROCm version (default: @ROCM_VERSION_STRING@)
+  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpu ID              GPU ID to monitor (default: 0, or ROCR_VISIBLE_DEVICES)
   --verbose             Enable verbose output and rocprofiler-sdk logging
@@ -172,7 +175,7 @@ while [[ $# -gt 0 ]]; do
             export FP64_MONITOR_FORMAT="$2"
             shift 2
             ;;
-        --version)
+        --rocm)
             export ROCM_VERSION_STRING="$2"
             shift 2
             ;;
@@ -331,10 +334,10 @@ if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; th
     
     # Find the analyze script
     ANALYZE_SCRIPT=""
-    for path in "${SCRIPT_DIR}/analyze_results.py" \
-                "${SCRIPT_DIR}/../bin/analyze_results.py" \
-                "${SCRIPT_DIR}/../tests/analyze_results.py" \
-                "${SCRIPT_DIR}/tests/analyze_results.py"; do
+    for path in "${SCRIPT_DIR}/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/../bin/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/../tests/fp64_monitor_analyze_results.py" \
+                "${SCRIPT_DIR}/tests/fp64_monitor_analyze_results.py"; do
         if [ -f "${path}" ]; then
             ANALYZE_SCRIPT="${path}"
             break

@@ -220,7 +220,7 @@ install(PROGRAMS ${PROJECT_BINARY_DIR}/tools/fp64_monitor.sh
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-install(PROGRAMS tests/analyze_results.py tests/plot_timeseries.py scripts/job.flux
+install(PROGRAMS tests/fp64_monitor_analyze_results.py tests/fp64_monitor_plot_timeseries.py scripts/job.flux
     DESTINATION bin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )

@@ -26,11 +26,11 @@ Requirements:
     - For HTML: pip install plotly
 
 Usage:
-    python3 plot_timeseries.py <csv_files...> [--output prefix] [--html]
-    python3 plot_timeseries.py fp64_monitor_*.csv --output my_analysis
-    python3 plot_timeseries.py fp64_monitor_*.csv --html
-    python3 plot_timeseries.py fp64_monitor_*.csv --counters int  # Use INT counters
-    python3 plot_timeseries.py fp64_monitor_*.csv -c auto         # Auto-detect
+    python3 fp64_monitor_plot_timeseries.py <csv_files...> [--output prefix] [--html]
+    python3 fp64_monitor_plot_timeseries.py fp64_monitor_*.csv --output my_analysis
+    python3 fp64_monitor_plot_timeseries.py fp64_monitor_*.csv --html
+    python3 fp64_monitor_plot_timeseries.py fp64_monitor_*.csv --counters int  # Use INT counters
+    python3 fp64_monitor_plot_timeseries.py fp64_monitor_*.csv -c auto         # Auto-detect
 """
 
 import sys

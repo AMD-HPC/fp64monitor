@@ -34,7 +34,7 @@ The injected shared library is built as CMake target `fp64_monitor_tool_<version
 
 `<ROCm-version>` is derived at **configure** time from your `ROCM_PATH` / `rocprofiler-sdk` location (for example `7.2.0` or `7.13.0a20260324-gfx94X`). The same string is baked into **`fp64_monitor.sh`** as `ROCM_VERSION_STRING`, so the wrapper loads the matching `.so` next to `prefix/lib/`.
 
-- **`fp64_monitor.sh --version <string>`** overrides that string when you have several installs and need the script to point at a different `libfp64_monitor_tool_<string>.so`.
+- **`fp64_monitor.sh --rocm <string>`** overrides that string when you have several installs and need the script to point at a different `libfp64_monitor_tool_<string>.so`.
 - For **`ROCP_TOOL_LIBRARIES`** by hand, use the exact filename under your build or install `lib/` (e.g. `ls build/libfp64_monitor_tool_*.so`).
 
 The **`measure_flops`** binary only lists GPUs and counters; live monitoring uses the versioned tool `.so` above.
@@ -51,7 +51,7 @@ mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./mpi_app
 
 `fp64_monitor.sh --help` / `--fullhelp` document options (interval, format, output pattern, GPU id, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
 
-**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so` from the script’s directory. If **`ROCR_VISIBLE_DEVICES`** is set, it exports **`FP64_MONITOR_GPU`** to that value. Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
+**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so` from the script’s directory. If **`ROCR_VISIBLE_DEVICES`** is set, it exports **`FP64_MONITOR_GPU`** to that value. Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
 
 **Direct injection:**
 
@@ -75,12 +75,12 @@ measure_flops --list-counters -g 0
 
 ## Analysis and plotting
 
-After a run, the wrapper runs `analyze_results.py` on the output directory unless `--no-analyze` is set. Scripts live in `tests/` in the source tree and are installed to `bin/`:
+After a run, the wrapper runs `fp64_monitor_analyze_results.py` on the output directory unless `--no-analyze` is set. Scripts live in `tests/` in the source tree and are installed to `bin/`:
 
 ```bash
-python3 tests/analyze_results.py fp64_monitor_output/fp64_monitor_*.csv
-python3 tests/plot_timeseries.py fp64_monitor_output/fp64_monitor_*.csv   # PDF
-python3 tests/plot_timeseries.py --html fp64_monitor_output/fp64_monitor_*.csv
+python3 tests/fp64_monitor_analyze_results.py fp64_monitor_output/fp64_monitor_*.csv
+python3 tests/fp64_monitor_plot_timeseries.py fp64_monitor_output/fp64_monitor_*.csv   # PDF
+python3 tests/fp64_monitor_plot_timeseries.py --html fp64_monitor_output/fp64_monitor_*.csv
 ```
 
 `pip install -r requirements.txt` — **matplotlib** for PDF; **plotly** optional for HTML.
