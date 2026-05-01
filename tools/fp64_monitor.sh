@@ -17,6 +17,7 @@
 export LD_LIBRARY_PATH="/usr/tce/packages/libfabric/libfabric-2.3.1nohwloc/lib64:${LD_LIBRARY_PATH}"
 
 ROCM_VERSION_STRING=@ROCM_VERSION_STRING@
+VERSION_PROVIDED=0
 INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
 if type -p flux &> /dev/null; then
@@ -177,6 +178,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --rocm)
             export ROCM_VERSION_STRING="$2"
+            export VERSION_PROVIDED=1
             shift 2
             ;;
         --dir)
@@ -237,11 +239,58 @@ while [[ $# -gt 0 ]]; do
 done
 
 
+# Detect MPI rank from environment
+get_mpi_rank() {
+    # Check various MPI implementations' rank environment variables
+    if [ -n "${OMPI_COMM_WORLD_RANK}" ]; then
+        echo "${OMPI_COMM_WORLD_RANK}"
+    elif [ -n "${PMI_RANK}" ]; then
+        echo "${PMI_RANK}"
+    elif [ -n "${SLURM_PROCID}" ]; then
+        echo "${SLURM_PROCID}"
+    elif [ -n "${MV2_COMM_WORLD_RANK}" ]; then
+        echo "${MV2_COMM_WORLD_RANK}"
+    elif [ -n "${ALPS_APP_PE}" ]; then
+        echo "${ALPS_APP_PE}"
+    elif [ -n "${PALS_RANKID}" ]; then
+        echo "${PALS_RANKID}"
+    else
+        echo "-1"
+    fi
+}
+
 # Set defaults for any unset variables
 export FP64_MONITOR_INTERVAL="${FP64_MONITOR_INTERVAL:-1000}"
 
 # Determine script directory and library path
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# Get MPI rank
+MPI_RANK=$(get_mpi_rank)
+
+if [ $VERSION_PROVIDED -eq 0 ] ; then
+    SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
+    # Attempt to identify the executable requirements
+    executable=$(echo $APP_ARGS | awk '{print $1}')
+    FILENAME=$(ldd $executable | grep libhsa-runtime | head -n 1 | awk '{print $3}')
+    version=$(echo "$FILENAME" | sed -r 's/.*rocm-([0-9.]+)\/.*/\1/')
+    MAJOR="${version%%.*}"
+    if [ "$MAJOR" -eq "7" ] ; then
+        ROCM_VERSION_STRING=7.2.1
+        if [ $MPI_RANK -eq 0 ] ; then
+            echo "$SCRIPT_NAME: Detected ROCm major version 7, using tool version $ROCM_VERSION_STRING"
+        fi
+    elif [ "$MAJOR" -eq "6" ] ; then
+        ROCM_VERSION_STRING=6.4.3
+        if [ $MPI_RANK -eq 0 ] ; then
+            echo "$SCRIPT_NAME: Detected ROCm major version 6, using tool version $ROCM_VERSION_STRING"
+        fi
+    else
+        if [ $MPI_RANK -eq 0 ] ; then
+            echo "$SCRIPT_NAME: Unable to detect ROCm version from executable, using $ROCM_VERSION_STRING"
+        fi
+    fi
+fi
 
 # Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library).
 # Shared library from CMake target fp64_monitor_tool_${ROCM_VERSION_STRING} -> libfp64_monitor_tool_${ROCM_VERSION_STRING}.so
@@ -276,26 +325,6 @@ if [ "${FP64_MONITOR_PRELOAD}" = "1" ]; then
     fi
 fi
 
-# Detect MPI rank from environment
-get_mpi_rank() {
-    # Check various MPI implementations' rank environment variables
-    if [ -n "${OMPI_COMM_WORLD_RANK}" ]; then
-        echo "${OMPI_COMM_WORLD_RANK}"
-    elif [ -n "${PMI_RANK}" ]; then
-        echo "${PMI_RANK}"
-    elif [ -n "${SLURM_PROCID}" ]; then
-        echo "${SLURM_PROCID}"
-    elif [ -n "${MV2_COMM_WORLD_RANK}" ]; then
-        echo "${MV2_COMM_WORLD_RANK}"
-    elif [ -n "${ALPS_APP_PE}" ]; then
-        echo "${ALPS_APP_PE}"
-    elif [ -n "${PALS_RANKID}" ]; then
-        echo "${PALS_RANKID}"
-    else
-        echo "-1"
-    fi
-}
-
 # Check if we have an application to run
 if [ ${#APP_ARGS[@]} -eq 0 ]; then
     echo "Error: No application specified" >&2
@@ -321,9 +350,6 @@ EXIT_CODE=$?
 
 # Restore original LD_PRELOAD
 export LD_PRELOAD="${OLD_LD_PRELOAD}"
-
-# Get MPI rank
-MPI_RANK=$(get_mpi_rank)
 
 # Auto-analyze results (only on rank 0, after a delay)
 ANALYZE="${FP64_MONITOR_ANALYZE:-1}"

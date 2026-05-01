@@ -5,6 +5,7 @@
 #include <sstream>
 #include <unistd.h>
 #include <vector>
+#include <iostream>
 
 namespace measure_flops {
 
@@ -90,10 +91,15 @@ void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
             smi_initialized_ = true;
             last_error_.clear();
         } else {
+            processor_handle_ = processors[0];
+            smi_initialized_ = true;
+            last_error_.clear();
+        /*
             last_error_ = "GPU " + std::to_string(gpu_id_) + " not found, only " 
                          + std::to_string(proc_count) + " GPUs available";
             stats.smi_valid = false;
             return;
+            */
         }
     }
     
@@ -115,8 +121,15 @@ void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
         status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_VRAM, &used);
         if (status == AMDSMI_STATUS_SUCCESS) {
             stats.vram_used = used;
+        } else {
+            last_error_ = "AMD SMI failed to read VRAM usage";
+            //std::cerr << gpu_id_ << ": Failed to read VRAM: " << status << std::endl;
         }
+    } else {
+        //std::cerr << gpu_id_ << ": Failed to read VRAM: " << status << std::endl;
+        last_error_ = "AMD SMI failed to read VRAM total";
     }
+    //std::cout << gpu_id_ << ": VRAM: " << stats.vram_used << " of " << stats.vram_total << std::endl;
     
     // Query visible VRAM (GPU memory visible to CPU)
     status = amdsmi_get_gpu_memory_total(processor_handle_, AMDSMI_MEM_TYPE_VIS_VRAM, &total);
@@ -125,9 +138,15 @@ void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
         status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_VIS_VRAM, &used);
         if (status == AMDSMI_STATUS_SUCCESS) {
             stats.vis_vram_used = used;
+        } else {
+            //std::cerr << gpu_id_ << ": Failed to read VIS VRAM: " << status << std::endl;
         }
+    } else {
+        //std::cerr << gpu_id_ << ": Failed to read VIS VRAM: " << status << std::endl;
     }
+    //std::cout << gpu_id_ << ": VIS VRAM: " << stats.vis_vram_used << " of " << stats.vis_vram_total << std::endl;
     
+    /* Disabled because unreliable on CPX/TPX modes... 
     // Query GTT (Graphics Translation Table - system memory accessible by GPU)
     status = amdsmi_get_gpu_memory_total(processor_handle_, AMDSMI_MEM_TYPE_GTT, &total);
     if (status == AMDSMI_STATUS_SUCCESS) {
@@ -135,8 +154,16 @@ void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
         status = amdsmi_get_gpu_memory_usage(processor_handle_, AMDSMI_MEM_TYPE_GTT, &used);
         if (status == AMDSMI_STATUS_SUCCESS) {
             stats.gtt_used = used;
+        } else {
+            //std::cerr << gpu_id_ << ": Failed to read GTT: " << status << std::endl;
+            last_error_ = "AMD SMI failed to read GTT usage";
         }
+    } else {
+        //std::cerr << gpu_id_ << ": Failed to read GTT: " << status << std::endl;
+        last_error_ = "AMD SMI failed to read GTT total";
     }
+    std::cout << gpu_id_ << ": GTT: " << stats.gtt_used << " of " << stats.gtt_total << std::endl;
+    */
     
     stats.smi_valid = (stats.vram_total > 0);
 #else
@@ -239,6 +266,13 @@ MemoryStats MemoryMonitor::sample() {
     }
     
     query_smi_memory(stats);
+    if (use_amd_smi_ && last_error_.size() > 0) {
+        static bool once = true;
+        if (once) {
+            std::cerr << gpu_id_ << ":" << last_error_ << std::endl;
+            once = false;
+        }
+    }
     query_cpu_memory(stats);
     
     update_high_water_marks(stats);
