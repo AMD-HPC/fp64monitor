@@ -269,25 +269,33 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 MPI_RANK=$(get_mpi_rank)
 
 if [ $VERSION_PROVIDED -eq 0 ] ; then
+    failed=0
     SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
     # Attempt to identify the executable requirements
     executable=$(echo $APP_ARGS | awk '{print $1}')
-    FILENAME=$(ldd $executable | grep libhsa-runtime | head -n 1 | awk '{print $3}')
-    version=$(echo "$FILENAME" | sed -r 's/.*rocm-([0-9.]+)\/.*/\1/')
-    MAJOR="${version%%.*}"
-    if [ "$MAJOR" -eq "7" ] ; then
-        ROCM_VERSION_STRING=7.2.1
-        if [ $MPI_RANK -eq 0 ] ; then
-            echo "$SCRIPT_NAME: Detected ROCm major version 7, using tool version $ROCM_VERSION_STRING"
-        fi
-    elif [ "$MAJOR" -eq "6" ] ; then
-        ROCM_VERSION_STRING=6.4.3
-        if [ $MPI_RANK -eq 0 ] ; then
-            echo "$SCRIPT_NAME: Detected ROCm major version 6, using tool version $ROCM_VERSION_STRING"
+    # Grep will set an error condition on failure, so don't exit :D
+    set +e
+    executable_type=$(file $executable | grep -c "ELF")
+    set -e
+    if [ $executable_type -eq 1 ] ; then
+        FILENAME=$(ldd $executable | grep libhsa-runtime | head -n 1 | awk '{print $3}')
+        version=$(echo "$FILENAME" | sed -r 's/.*rocm-([0-9.]+)\/.*/\1/')
+        MAJOR="${version%%.*}"
+        if [ "$MAJOR" -eq "7" ] ; then
+            ROCM_VERSION_STRING=7.2.1
+        elif [ "$MAJOR" -eq "6" ] ; then
+            ROCM_VERSION_STRING=6.4.3
+        else
+            failed=1
         fi
     else
-        if [ $MPI_RANK -eq 0 ] ; then
+        failed=1
+    fi
+    if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
+        if [ $failed -eq 1 ] ; then
             echo "$SCRIPT_NAME: Unable to detect ROCm version from executable, using $ROCM_VERSION_STRING"
+        else
+            echo "$SCRIPT_NAME: Detected ROCm major version $MAJOR, using tool version $ROCM_VERSION_STRING"
         fi
     fi
 fi
