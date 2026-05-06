@@ -160,6 +160,8 @@ struct InstructionMix {
 struct MonitorConfig {
     std::chrono::milliseconds sampling_interval{100};
     std::vector<int> gpu_ids;            // Empty = all GPUs
+    // When set (e.g. per-GPU file in a multi-GPU run), JSON/Text headers include full run list.
+    std::vector<int> metadata_monitored_gpu_ids;
     std::string output_file;             // Empty = stdout
     std::string output_format{"text"};   // text, csv, json
     std::string counter_set_name{"fp64"}; // Counter set being used (for analysis tagging)

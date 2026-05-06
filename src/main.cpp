@@ -31,7 +31,7 @@ void print_usage(const char* prog_name) {
               << "  -V, --version           Show version information\n"
               << "  -l, --list-gpus         List available GPUs and exit\n"
               << "  -c, --list-counters     List available counters for a GPU\n"
-              << "  -g, --gpu ID            GPU ID for queries (default: 0)\n"
+              << "  -g, --gpus ID           GPU id for list-counters (default: 0); --gpu accepted as alias\n"
               << "  -s, --show-usage        Show detailed usage instructions\n"
               << "\n"
               << "Examples:\n"
@@ -172,9 +172,9 @@ void show_usage_instructions() {
     std::cout << std::setw(28) << "FP64_MONITOR_INTERVAL"
               << std::setw(15) << "100"
               << "Sampling interval (ms)\n";
-    std::cout << std::setw(28) << "FP64_MONITOR_GPU"
+    std::cout << std::setw(28) << "FP64_MONITOR_GPUS"
               << std::setw(15) << "0"
-              << "GPU ID to monitor\n";
+              << "Comma-separated ids or \"all\" (tool library; see fp64_monitor.sh)\n";
     std::cout << std::setw(28) << "FP64_MONITOR_OUTPUT"
               << std::setw(15) << "auto"
               << "Output file (see patterns below)\n";
@@ -259,7 +259,7 @@ int main(int argc, char* argv[]) {
             list_counters_flag = true;
         } else if (arg == "-s" || arg == "--show-usage") {
             show_usage_flag = true;
-        } else if ((arg == "-g" || arg == "--gpu") && i + 1 < argc) {
+        } else if ((arg == "-g" || arg == "--gpu" || arg == "--gpus") && i + 1 < argc) {
             gpu_id = std::atoi(argv[++i]);
         } else {
             std::cerr << "Unknown option: " << arg << "\n";

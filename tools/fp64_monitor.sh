@@ -43,7 +43,7 @@ Options:
   --format FORMAT       Output format: csv, json, or text (default: csv)
   --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
-  --gpu ID              GPU ID to monitor (default: 0)
+  --gpus IDS            Logical GPU ids: comma-separated (e.g. 0,1,2) or "all". See --fullhelp.
   --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
   --use-amdsmi          Enable GPU memory monitoring via AMD SMI
   --tmpdir DIR          Fast local storage for temp output (e.g., /dev/shm)
@@ -70,7 +70,7 @@ GENERAL OPTIONS:
   --format FORMAT       Output format: csv, json, or text (default: csv)
   --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
   --dir DIR             Output directory (default: fp64_monitor_output)
-  --gpu ID              GPU ID to monitor (default: 0, or ROCR_VISIBLE_DEVICES)
+  --gpus IDS            Logical GPU ids (comma-separated) or "all" for every visible GPU. Overrides ROCR when set.
   --verbose             Enable verbose output and rocprofiler-sdk logging
   --help                Show brief help message
   --fullhelp            Show this detailed help message
@@ -125,7 +125,7 @@ ENVIRONMENT VARIABLES (overridden by command line options):
   FP64_MONITOR_OUTPUT        Output file pattern
   FP64_MONITOR_FORMAT        Output format: csv, json, text
   FP64_MONITOR_DIR           Output directory
-  FP64_MONITOR_GPU           GPU ID to monitor
+  FP64_MONITOR_GPUS          Comma-separated logical GPU ids, or "all" (see precedence in --fullhelp)
   FP64_MONITOR_COUNTERS      Counter set name
   FP64_MONITOR_TMPDIR        Temporary storage directory
   FP64_MONITOR_USE_AMDSMI    Set to 1 to enable AMD SMI memory monitoring
@@ -149,6 +149,16 @@ EXAMPLES:
   # Verbose output for debugging
   fp64_monitor.sh --verbose --counters fp64 -- ./my_app
 
+  # Every visible logical GPU (one output file per GPU by default)
+  fp64_monitor.sh --gpus all -- ./my_app
+
+GPU SELECTION (fp64_monitor.sh):
+  Precedence: --gpus > FP64_MONITOR_GPUS (environment) > ROCR_VISIBLE_DEVICES > default 0.
+  ROCR_VISIBLE_DEVICES may list multiple devices (e.g. 0,1,2,3); it is copied to FP64_MONITOR_GPUS
+  when you do not pass --gpus and FP64_MONITOR_GPUS is unset.
+  Use --gpus all or FP64_MONITOR_GPUS=all to monitor every logical GPU visible to this process
+  (after ROCR filtering). Each GPU writes a separate CSV (default name includes _gpu<N>_).
+
 OUTPUT:
   CSV files are written to the output directory (default: fp64_monitor_output/).
   After the run completes, an automatic analysis is performed showing:
@@ -163,6 +173,7 @@ EOF
 
 # Parse command line arguments
 APP_ARGS=()
+GPUS_FROM_CLI=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --interval)
@@ -186,8 +197,9 @@ while [[ $# -gt 0 ]]; do
             export FP64_MONITOR_DIR="$2"
             shift 2
             ;;
-        --gpu)
-            export FP64_MONITOR_GPU="$2"
+        --gpus)
+            export FP64_MONITOR_GPUS="$2"
+            GPUS_FROM_CLI=1
             shift 2
             ;;
         --tmpdir)
@@ -302,7 +314,7 @@ fi
 
 MAJOR="${ROCM_VERSION_STRING%%.*}"
 if [ "$MAJOR" -eq "7" ] ; then
-    ROCM_VERSION_STRING=7.2.1
+    ROCM_VERSION_STRING=7.13.0a20260324-gfx94X
 elif [ "$MAJOR" -eq "6" ] ; then
     ROCM_VERSION_STRING=6.4.3
 else
@@ -353,9 +365,15 @@ if [ ${#APP_ARGS[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Set GPU from ROCR_VISIBLE_DEVICES
-if [[ -v ROCR_VISIBLE_DEVICES ]] ; then
-    export FP64_MONITOR_GPU=${ROCR_VISIBLE_DEVICES}
+# FP64_MONITOR_GPUS precedence: --gpus > env FP64_MONITOR_GPUS > ROCR_VISIBLE_DEVICES > 0
+if [ "${GPUS_FROM_CLI}" != "1" ]; then
+    if [ -z "${FP64_MONITOR_GPUS:-}" ]; then
+        if [ -n "${ROCR_VISIBLE_DEVICES:-}" ]; then
+            export FP64_MONITOR_GPUS="${ROCR_VISIBLE_DEVICES}"
+        else
+            export FP64_MONITOR_GPUS=0
+        fi
+    fi
 fi
 
 # Suppress verbose rocprofiler-sdk logging by default
@@ -407,6 +425,7 @@ if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; th
         fi
     fi
     
+    echo ${OUTPUT_FILES}
     if [ -n "${OUTPUT_FILES}" ] && [ -f "${ANALYZE_SCRIPT}" ]; then
         echo "" >&2
         # Pass all files to analysis script for aggregated output

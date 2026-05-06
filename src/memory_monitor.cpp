@@ -66,40 +66,42 @@ void MemoryMonitor::query_smi_memory(MemoryStats& stats) {
             stats.smi_valid = false;
             return;
         }
-        
-        // Get processor (GPU) handles from first socket
-        uint32_t proc_count = 0;
-        init_status = amdsmi_get_processor_handles(sockets[0], &proc_count, nullptr);
-        if (init_status != AMDSMI_STATUS_SUCCESS || proc_count == 0) {
-            last_error_ = "amdsmi_get_processor_handles failed: status=" + std::to_string(init_status)
-                         + ", count=" + std::to_string(proc_count);
+
+        // Flatten processors from every socket. gpu_id_ is the logical GPU index (ROCR order),
+        // not a socket index — using only sockets[0] would miss GPUs on other sockets.
+        std::vector<amdsmi_processor_handle> all_processors;
+        for (uint32_t si = 0; si < socket_count; ++si) {
+            uint32_t proc_count = 0;
+            init_status = amdsmi_get_processor_handles(sockets[si], &proc_count, nullptr);
+            if (init_status != AMDSMI_STATUS_SUCCESS || proc_count == 0) {
+                continue;
+            }
+            std::vector<amdsmi_processor_handle> processors(proc_count);
+            init_status = amdsmi_get_processor_handles(sockets[si], &proc_count, processors.data());
+            if (init_status != AMDSMI_STATUS_SUCCESS) {
+                last_error_ = "amdsmi_get_processor_handles (data) failed for socket " +
+                             std::to_string(si) + ": " + std::to_string(init_status);
+                stats.smi_valid = false;
+                return;
+            }
+            all_processors.insert(all_processors.end(), processors.begin(), processors.end());
+        }
+
+        if (all_processors.empty()) {
+            last_error_ = "amdsmi_get_processor_handles: no processors on any socket";
             stats.smi_valid = false;
             return;
         }
-        
-        std::vector<amdsmi_processor_handle> processors(proc_count);
-        init_status = amdsmi_get_processor_handles(sockets[0], &proc_count, processors.data());
-        if (init_status != AMDSMI_STATUS_SUCCESS) {
-            last_error_ = "amdsmi_get_processor_handles (data) failed: " + std::to_string(init_status);
-            stats.smi_valid = false;
-            return;
-        }
-        
-        // Store the processor handle for the requested GPU
-        if (static_cast<uint32_t>(gpu_id_) < proc_count) {
-            processor_handle_ = processors[gpu_id_];
+
+        if (static_cast<uint32_t>(gpu_id_) < all_processors.size()) {
+            processor_handle_ = all_processors[static_cast<size_t>(gpu_id_)];
             smi_initialized_ = true;
             last_error_.clear();
         } else {
-            processor_handle_ = processors[0];
-            smi_initialized_ = true;
-            last_error_.clear();
-        /*
-            last_error_ = "GPU " + std::to_string(gpu_id_) + " not found, only " 
-                         + std::to_string(proc_count) + " GPUs available";
+            last_error_ = "GPU " + std::to_string(gpu_id_) + " not found, only " +
+                         std::to_string(all_processors.size()) + " GPU(s) in AMD SMI enumeration";
             stats.smi_valid = false;
             return;
-            */
         }
     }
     
@@ -266,13 +268,6 @@ MemoryStats MemoryMonitor::sample() {
     }
     
     query_smi_memory(stats);
-    if (use_amd_smi_ && last_error_.size() > 0) {
-        static bool once = true;
-        if (once) {
-            std::cerr << gpu_id_ << ":" << last_error_ << std::endl;
-            once = false;
-        }
-    }
     query_cpu_memory(stats);
     
     update_high_water_marks(stats);

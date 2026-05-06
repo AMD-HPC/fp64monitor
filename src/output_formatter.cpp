@@ -35,6 +35,14 @@ void TextFormatter::write_header(std::ostream& os, const MonitorConfig& config) 
         }
         os << "\n";
     }
+    if (config.metadata_monitored_gpu_ids.size() > 1) {
+        os << "Run GPU set:       ";
+        for (size_t i = 0; i < config.metadata_monitored_gpu_ids.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << config.metadata_monitored_gpu_ids[i];
+        }
+        os << " (this file is one GPU of the run)\n";
+    }
     os << std::string(78, '=') << "\n\n";
 
     os << std::left
@@ -213,8 +221,16 @@ void JsonFormatter::write_header(std::ostream& os, const MonitorConfig& config) 
         if (i > 0) os << ", ";
         os << config.gpu_ids[i];
     }
-    os << "]\n";
-    os << "  },\n";
+    os << "]";
+    if (!config.metadata_monitored_gpu_ids.empty()) {
+        os << ",\n    \"monitored_gpu_ids\": [";
+        for (size_t i = 0; i < config.metadata_monitored_gpu_ids.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << config.metadata_monitored_gpu_ids[i];
+        }
+        os << "]";
+    }
+    os << "\n  },\n";
     os << "  \"samples\": [\n";
     
     first_sample_ = true;

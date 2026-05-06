@@ -49,9 +49,11 @@ fp64_monitor.sh --interval 500 --counters highlevel --use-amdsmi -- ./your_app
 mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./mpi_app
 ```
 
-`fp64_monitor.sh --help` / `--fullhelp` document options (interval, format, output pattern, GPU id, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
+`fp64_monitor.sh --help` / `--fullhelp` document options (interval, format, output pattern, **`--gpus`**, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
 
-**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so` from the script’s directory. If **`ROCR_VISIBLE_DEVICES`** is set, it exports **`FP64_MONITOR_GPU`** to that value. Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
+**GPU selection (wrapper):** **`--gpus IDS`** (comma-separated logical IDs, or **`all`** for every GPU visible after ROCR) **>** **`FP64_MONITOR_GPUS`** **>** **`ROCR_VISIBLE_DEVICES`** **>** default **`0`**. Use **`--gpus`** (e.g. **`--gpus 2`** or **`--gpus 0,1`**) to override ROCR when you only want to monitor a subset. **Multiple GPUs:** one output file per GPU (default names include **`_gpu<N>_`**). Custom **`FP64_MONITOR_OUTPUT`** with several GPUs must include **`%g`** (or the wrapper inserts **`_gpu%g`** before the extension) so paths stay unique.
+
+**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so` from the script’s directory and sets **`FP64_MONITOR_GPUS`** per the precedence above when **`ROCR_VISIBLE_DEVICES`** lists devices (e.g. `0,1,2,3`). Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
 
 **Direct injection:**
 
@@ -60,7 +62,7 @@ export ROCP_TOOL_LIBRARIES=/path/to/lib/libfp64_monitor_tool_<ROCm-version>.so
 ./your_hip_app
 ```
 
-**Environment** (when not using the wrapper): `FP64_MONITOR_INTERVAL`, `FP64_MONITOR_GPU`, `FP64_MONITOR_OUTPUT`, `FP64_MONITOR_FORMAT` (`csv`/`json`/`text`), `FP64_MONITOR_DIR`, `FP64_MONITOR_TMPDIR`, `FP64_MONITOR_COUNTERS`, `FP64_MONITOR_USE_AMDSMI`, `FP64_MONITOR_PRELOAD`, `FP64_MONITOR_ANALYZE`, `FP64_MONITOR_VERBOSE`. Output naming supports MPI rank detection and patterns with `%r`, `%p`, `%h`; use `FP64_MONITOR_OUTPUT=stdout` for the console.
+**Environment** (when not using the wrapper): `FP64_MONITOR_INTERVAL`, **`FP64_MONITOR_GPUS`** (comma-separated logical IDs or **`all`**), `FP64_MONITOR_OUTPUT`, `FP64_MONITOR_FORMAT` (`csv`/`json`/`text`), `FP64_MONITOR_DIR`, `FP64_MONITOR_TMPDIR`, `FP64_MONITOR_COUNTERS`, `FP64_MONITOR_USE_AMDSMI`, `FP64_MONITOR_PRELOAD`, `FP64_MONITOR_ANALYZE`, `FP64_MONITOR_VERBOSE`. Output naming supports MPI rank detection and patterns with `%r`, `%p`, `%h`; use `FP64_MONITOR_OUTPUT=stdout` for the console.
 
 Shorter runs: try **50–100 ms** intervals; longer jobs often use **500–1000 ms**. Samples are **cumulative** totals; use the Python tools or deltas between rows for per-interval rates.
 

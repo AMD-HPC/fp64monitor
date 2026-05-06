@@ -6,18 +6,20 @@ Usage:
     python3 fp64_monitor_analyze_results.py <csv_file> [csv_file2 ...]
     python3 fp64_monitor_analyze_results.py fp64_monitor_*.csv
     
-When multiple files are provided (e.g., from MPI runs), data is aggregated
-across all ranks and a single combined summary is reported.
+When multiple files are provided, data is aggregated and a single combined
+summary is reported. Filenames are classified when possible:
+    - Same PID, multiple ``_gpu<N>_pid`` files → one process, multiple GPUs.
+    - ``_gpu<N>_rank<R>`` or legacy ``fp64_monitor_<rank>.csv`` → MPI ranks.
 
 Deduplication:
     When multiple processes on the same host monitor the same GPU, hardware
     counters are shared (per-GPU, not per-process). The script automatically
-    deduplicates by (hostname, gpu_id), keeping only the lowest-ranked file
-    for each combination to avoid double-counting.
+    deduplicates by (hostname, gpu_id), keeping only the lowest MPI rank (or
+    first file when rank is unknown) per (hostname, gpu_id).
 
 Output:
     - Console: Aggregated summary
-    - fp64_report.txt: Detailed report with per-rank statistics
+    - fp64_report.txt: Detailed per-source statistics
 
 Supports both:
     - fp64_monitor_tool CSV output (sample_id,elapsed_seconds,...)
@@ -97,6 +99,123 @@ def parse_filename_info(filename):
         'rank': None,
         'filename': filename
     }
+
+
+_RE_STEM_GPU_PID = re.compile(r'fp64_monitor_.+_gpu(\d+)_pid(\d+)$')
+_RE_STEM_GPU_RANK = re.compile(r'fp64_monitor_.+_gpu(\d+)_rank(\d+)$')
+_RE_STEM_LEGACY_RANK = re.compile(r'fp64_monitor_(\d+)$')
+
+
+def infer_source_layout(filenames):
+    """
+    Classify inputs for report wording.
+
+    Returns one of:
+        'single'     — one CSV
+        'multi_gpu'  — same PID, multiple *_gpuN_pid* files (one job, many GPUs)
+        'mpi'        — *_gpuN_rankR* or legacy fp64_monitor_<rank>
+        'neutral'    — multiple files, layout not inferred from names
+    """
+    if len(filenames) <= 1:
+        return 'single'
+    stems = [Path(f).stem for f in filenames]
+    m_pid = [_RE_STEM_GPU_PID.match(s) for s in stems]
+    if all(m for m in m_pid):
+        pids = {int(m.group(2)) for m in m_pid}
+        gpus = {int(m.group(1)) for m in m_pid}
+        if len(pids) == 1 and len(gpus) > 1:
+            return 'multi_gpu'
+    m_rank = [_RE_STEM_GPU_RANK.match(s) for s in stems]
+    if all(m for m in m_rank):
+        return 'mpi'
+    if all(_RE_STEM_LEGACY_RANK.match(s) for s in stems):
+        return 'mpi'
+    return 'neutral'
+
+
+def build_report_labels(layout):
+    """Labels for console summary and fp64_report.txt (see infer_source_layout)."""
+    if layout == 'multi_gpu':
+        return {
+            'layout': layout,
+            'summary_count': 'Monitored GPUs',
+            'aggregated': 'aggregated across all monitored GPUs',
+            'per_source_section': 'Per-GPU summary',
+            'stats_across': 'Statistical analysis across monitored GPUs',
+            'no_activity': 'No active samples found in any input file.',
+            'memory_scope': 'per GPU',
+            'table_col': 'GPU',
+            'detail_subtitle': 'Detailed per-GPU statistics',
+        }
+    if layout == 'mpi':
+        return {
+            'layout': layout,
+            'summary_count': 'MPI ranks',
+            'aggregated': 'aggregated across all MPI ranks',
+            'per_source_section': 'Per-MPI-rank summary',
+            'stats_across': 'Statistical analysis across MPI ranks',
+            'no_activity': 'No active samples found in any MPI rank file.',
+            'memory_scope': 'per MPI rank',
+            'table_col': 'Rank',
+            'detail_subtitle': 'Detailed per-MPI-rank statistics',
+        }
+    if layout == 'single':
+        return {
+            'layout': layout,
+            'summary_count': 'Input files',
+            'aggregated': '',
+            'per_source_section': 'Per-file summary',
+            'stats_across': 'Statistical analysis',
+            'no_activity': 'No active samples found in this file.',
+            'memory_scope': 'per file',
+            'table_col': '#',
+            'detail_subtitle': 'Detailed statistics',
+        }
+    return {
+        'layout': layout,
+        'summary_count': 'Input files',
+        'aggregated': 'aggregated across all input files',
+        'per_source_section': 'Per-file summary',
+        'stats_across': 'Statistical analysis across input files',
+        'no_activity': 'No active samples found in any input file.',
+        'memory_scope': 'per input file',
+        'table_col': 'Src',
+        'detail_subtitle': 'Detailed per-file statistics',
+    }
+
+
+def section_title(base, labels, n_sources):
+    """Append aggregation phrase only when multiple sources."""
+    agg = labels.get('aggregated') or ''
+    if n_sources > 1 and agg:
+        return f"{base} ({agg})"
+    return base
+
+
+def source_table_label(filename, layout, fallback_index):
+    """First-column label for per-source summary table."""
+    info = parse_filename_info(filename)
+    if layout == 'multi_gpu' and info.get('gpu_id') is not None:
+        return str(info['gpu_id'])
+    if layout == 'mpi' and info.get('rank') is not None:
+        return str(info['rank'])
+    return str(fallback_index)
+
+
+def format_source_totals_note(valid, total, labels):
+    """Footnote for memory HWM totals, e.g. '4 GPUs' or '2 of 4 MPI rank files'."""
+    layout = labels['layout']
+    if layout == 'multi_gpu':
+        if valid == total:
+            return f"{valid} GPUs"
+        return f"{valid} of {total} GPU files"
+    if layout == 'mpi':
+        if valid == total:
+            return f"{valid} MPI ranks"
+        return f"{valid} of {total} MPI rank files"
+    if valid == total:
+        return f"{valid} files"
+    return f"{valid} of {total} files"
 
 
 def get_gpu_id_from_csv(filename):
@@ -237,9 +356,12 @@ def compute_stats(values):
 
 
 def write_detailed_report(filenames, report_file=None):
-    """Write detailed report with per-rank statistics to file."""
-    
-    # Load data per rank
+    """Write detailed report with per-source statistics to file."""
+
+    layout = infer_source_layout(filenames)
+    labels = build_report_labels(layout)
+
+    # Load data per source file
     rank_data = {}
     for filename in filenames:
         rows, _ = load_fp64_monitor_csv(filename)
@@ -306,27 +428,28 @@ def write_detailed_report(filenames, report_file=None):
                     rank_totals[filename]['fp64_valu_pct'] = 0.0
         
         if not rank_totals:
-            f.write("No active samples found in any rank.\n")
+            f.write(labels['no_activity'] + "\n")
             return
         
-        # Per-rank summary table
+        # Per-source summary table
         f.write("-" * 78 + "\n")
-        f.write("Per-Rank Summary\n")
+        f.write(labels['per_source_section'] + "\n")
         f.write("-" * 78 + "\n\n")
-        
-        f.write(f"{'Rank':<6} {'Samples':>8} {'FP64 VALU':>15} {'Total VALU':>15} {'FP64%':>8} {'GPU HWM':>10}\n")
+
+        col = labels['table_col']
+        f.write(f"{col:<8} {'Samples':>8} {'FP64 VALU':>15} {'Total VALU':>15} {'FP64%':>8} {'GPU HWM':>10}\n")
         f.write("-" * 78 + "\n")
-        
+
         for i, filename in enumerate(sorted(rank_totals.keys())):
+            row_label = source_table_label(filename, layout, i)
             data = rank_totals[filename]
-            f.write(f"{i:<6} {data['active_samples']:>8} {data['fp64_valu']:>15,.0f} "
+            f.write(f"{row_label:<8} {data['active_samples']:>8} {data['fp64_valu']:>15,.0f} "
                    f"{data['total_valu']:>15,.0f} {data['fp64_valu_pct']:>7.2f}% "
                    f"{data['gpu_hwm']:>9.1f}M\n")
         f.write("\n")
-        
-        # Statistical analysis across ranks
+
         f.write("-" * 78 + "\n")
-        f.write("Statistical Analysis Across MPI Ranks\n")
+        f.write(labels['stats_across'] + "\n")
         f.write("-" * 78 + "\n\n")
         
         metrics = [
@@ -381,9 +504,12 @@ def write_detailed_report(filenames, report_file=None):
 
 
 def write_detailed_report_to_file(filenames, f):
-    """Write detailed per-rank statistics to an already open file handle."""
-    
-    # Load data per rank
+    """Write detailed per-source statistics to an already open file handle."""
+
+    layout = infer_source_layout(filenames)
+    labels = build_report_labels(layout)
+
+    # Load data per source file
     rank_data = {}
     for filename in filenames:
         rows, _ = load_fp64_monitor_csv(filename)
@@ -396,9 +522,9 @@ def write_detailed_report_to_file(filenames, f):
     num_ranks = len(rank_data)
     
     f.write("=" * 78 + "\n")
-    f.write("Detailed Per-Rank Statistics\n")
+    f.write(labels['detail_subtitle'] + "\n")
     f.write("=" * 78 + "\n\n")
-    
+
     f.write(f"Input files: {num_ranks}\n")
     for fn in sorted(filenames):
         f.write(f"  - {fn}\n")
@@ -441,27 +567,27 @@ def write_detailed_report_to_file(filenames, f):
                 rank_totals[filename]['fp64_valu_pct'] = 0.0
     
     if not rank_totals:
-        f.write("No active samples found in any rank.\n")
+        f.write(labels['no_activity'] + "\n")
         return
-    
-    # Per-rank summary table
+
     f.write("-" * 78 + "\n")
-    f.write("Per-Rank Summary\n")
+    f.write(labels['per_source_section'] + "\n")
     f.write("-" * 78 + "\n\n")
-    
-    f.write(f"{'Rank':<6} {'Samples':>8} {'FP64 VALU':>15} {'Total VALU':>15} {'FP64%':>8} {'GPU HWM':>10}\n")
+
+    col = labels['table_col']
+    f.write(f"{col:<8} {'Samples':>8} {'FP64 VALU':>15} {'Total VALU':>15} {'FP64%':>8} {'GPU HWM':>10}\n")
     f.write("-" * 78 + "\n")
-    
+
     for i, filename in enumerate(sorted(rank_totals.keys())):
+        row_label = source_table_label(filename, layout, i)
         data = rank_totals[filename]
-        f.write(f"{i:<6} {data['active_samples']:>8} {data['fp64_valu']:>15,.0f} "
+        f.write(f"{row_label:<8} {data['active_samples']:>8} {data['fp64_valu']:>15,.0f} "
                f"{data['total_valu']:>15,.0f} {data['fp64_valu_pct']:>7.2f}% "
                f"{data['gpu_hwm']:>9.1f}M\n")
     f.write("\n")
-    
-    # Statistical analysis across ranks
+
     f.write("-" * 78 + "\n")
-    f.write("Statistical Analysis Across MPI Ranks\n")
+    f.write(labels['stats_across'] + "\n")
     f.write("-" * 78 + "\n\n")
     
     metrics = [
@@ -560,20 +686,23 @@ def detect_counter_set(rows):
 
 def analyze_fp64_monitor_files(filenames):
     """Analyze and aggregate CSV output from one or more fp64_monitor files."""
-    
+
     all_rows = []
-    num_ranks = len(filenames)
-    
+
     for filename in filenames:
         rows, _ = load_fp64_monitor_csv(filename)
         for row in rows:
             row['_source_file'] = filename
         all_rows.extend(rows)
-    
+
     if not all_rows:
         print("Error: No data found in CSV files")
         return
-    
+
+    layout = infer_source_layout(filenames)
+    labels = build_report_labels(layout)
+    num_sources = len(filenames)
+
     # Detect counter set
     counter_set = detect_counter_set(all_rows)
     
@@ -598,9 +727,18 @@ def analyze_fp64_monitor_files(filenames):
         p("=" * 70)
         p()
         p(f"Counter Set:   {counter_set}")
-        p(f"MPI Ranks:     {num_ranks}")
+        p(f"{(labels['summary_count'] + ':'):<17} {num_sources}")
         p(f"Total samples: {len(all_rows)}")
-        
+
+        if num_sources > 1:
+            if layout == 'multi_gpu':
+                p("(Each file is one GPU from the same process; totals sum counters across GPUs.)")
+            elif layout == 'mpi':
+                p("(Each file is one MPI rank; totals sum counters across ranks.)")
+            else:
+                p("(Totals sum each file's final counter maxima; MPI vs multi-GPU not inferred from names.)")
+            p()
+
         # Find samples with actual activity (non-zero instructions)
         active_samples = [r for r in all_rows if float(r.get('total_instructions', 0)) > 0]
         idle_samples = [r for r in all_rows if float(r.get('total_instructions', 0)) == 0]
@@ -621,7 +759,7 @@ def analyze_fp64_monitor_files(filenames):
                 rank_samples[r.get('_source_file', 'unknown')].append(r)
             
             def sum_across_ranks(counter_name):
-                """Sum the final (max) value of a counter across all ranks."""
+                """Sum the final (max) value of a counter per input file, across files."""
                 total = 0
                 for samples in rank_samples.values():
                     rank_max = max((float(r.get(counter_name, 0)) for r in samples), default=0)
@@ -655,7 +793,7 @@ def analyze_fp64_monitor_files(filenames):
                 highlevel_sum = total_valu + total_salu + total_vmem + total_smem + total_lds + total_branch + total_mfma
                 if highlevel_sum > 0 and total_insts > 0:
                     p("-" * 70)
-                    p("High-Level Instruction Mix (aggregated across all ranks)")
+                    p(section_title("High-Level Instruction Mix", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
@@ -683,7 +821,7 @@ def analyze_fp64_monitor_files(filenames):
                 highlevel2_sum = total_flat + total_gds + total_exp_gds + total_sendmsg + total_vskipped
                 if highlevel2_sum > 0 and total_insts > 0:
                     p("-" * 70)
-                    p("Other Instruction Types (aggregated across all ranks)")
+                    p(section_title("Other Instruction Types", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  {'Category':<12} {'Count':>18} {'% of Total':>12}")
@@ -708,7 +846,7 @@ def analyze_fp64_monitor_files(filenames):
             # Only show FP64 section if fp64 counter set was used
             if counter_set == 'fp64' and total_fp64_valu > 0:
                 p("-" * 70)
-                p("FP64 Instruction Counts (aggregated across all ranks)")
+                p(section_title("FP64 Instruction Counts", labels, num_sources))
                 p("-" * 70)
                 p()
                 p(f"  FP64 ADD:        {total_fp64_add:>18,.0f}")
@@ -741,7 +879,7 @@ def analyze_fp64_monitor_files(filenames):
                 
                 if total_fp32_valu > 0:
                     p("-" * 70)
-                    p("FP32 Instruction Counts (aggregated across all ranks)")
+                    p(section_title("FP32 Instruction Counts", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  FP32 ADD:        {total_fp32_add:>18,.0f}")
@@ -769,7 +907,7 @@ def analyze_fp64_monitor_files(filenames):
                 
                 if total_fp16_valu > 0:
                     p("-" * 70)
-                    p("FP16/BF16 Instruction Counts (aggregated across all ranks)")
+                    p(section_title("FP16/BF16 Instruction Counts", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  FP16 ADD:        {total_fp16_add:>18,.0f}")
@@ -794,7 +932,7 @@ def analyze_fp64_monitor_files(filenames):
                 
                 if total_int_valu > 0:
                     p("-" * 70)
-                    p("Integer Instruction Counts (aggregated across all ranks)")
+                    p(section_title("Integer Instruction Counts", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  INT32 VALU:      {total_int32:>18,.0f}")
@@ -819,7 +957,7 @@ def analyze_fp64_monitor_files(filenames):
                 
                 if total_salu_c > 0 or total_smem_c > 0:
                     p("-" * 70)
-                    p("Scalar & Memory Instructions (aggregated across all ranks)")
+                    p(section_title("Scalar & Memory Instructions", labels, num_sources))
                     p("-" * 70)
                     p()
                     p(f"  SALU (Scalar ALU): {total_salu_c:>18,.0f}")
@@ -838,7 +976,7 @@ def analyze_fp64_monitor_files(filenames):
                         p(f"Branch %% of Total:  {(total_branch_c / total_insts) * 100:>10.2f}%")
                     p()
         
-        # Memory Analysis - compute per-rank HWMs then aggregate
+        # Memory Analysis - compute per-file HWMs then aggregate
         # Check for memory data - look for vram_hwm_mb (amd-smi) or cpu_resident_hwm_mb
         has_memory_data = (
             'vram_hwm_mb' in all_rows[0] or 
@@ -847,14 +985,12 @@ def analyze_fp64_monitor_files(filenames):
         ) if all_rows else False
         
         if has_memory_data:
-            # Group rows by source file (rank) and compute per-rank HWMs
             rank_rows = defaultdict(list)
             for row in all_rows:
                 rank_rows[row.get('_source_file', 'unknown')].append(row)
             
-            total_ranks = len(rank_rows)
-            
-            # Compute per-rank memory HWMs
+            total_sources = len(rank_rows)
+
             per_rank_vram_hwm = []
             per_rank_gtt_hwm = []
             per_rank_cpu_hwm = []
@@ -872,35 +1008,28 @@ def analyze_fp64_monitor_files(filenames):
                 if cpu_hwm > 0:
                     per_rank_cpu_hwm.append(cpu_hwm)
                 
-                # Get total memory (should be same for all samples in a rank)
                 vram_totals = [float(r.get('vram_total_mb', 0)) for r in rows if float(r.get('vram_total_mb', 0)) > 0]
                 if vram_totals:
                     vram_total_per_rank = vram_totals[0]
             
-            # Only show memory section if we have any memory data
             has_any_memory = per_rank_vram_hwm or per_rank_gtt_hwm or per_rank_cpu_hwm
             if has_any_memory:
                 p("-" * 70)
-                p("Memory Usage (aggregated across all ranks)")
+                p(section_title("Memory Usage", labels, num_sources))
                 p("-" * 70)
                 p()
-                
-                def rank_count_str(valid_ranks, total_ranks):
-                    """Format rank count, noting if some ranks had no data."""
-                    if valid_ranks == total_ranks:
-                        return f"{valid_ranks} ranks"
-                    else:
-                        return f"{valid_ranks} of {total_ranks} ranks"
                 
                 if per_rank_vram_hwm:
                     stats = compute_stats(per_rank_vram_hwm)
                     total_hwm = sum(per_rank_vram_hwm)
-                    p(f"VRAM (GPU Memory): {vram_total_per_rank/1024:.1f} GB per rank")
+                    scope = labels['memory_scope']
+                    p(f"VRAM (GPU Memory): {vram_total_per_rank/1024:.1f} GB {scope}")
                     p(f"  HWM Min:    {stats['min']:>10.1f} MB")
                     p(f"  HWM Max:    {stats['max']:>10.1f} MB")
                     p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
                     p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_vram_hwm), total_ranks)})")
+                    note = format_source_totals_note(len(per_rank_vram_hwm), total_sources, labels)
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({note})")
                     p()
                 
                 if per_rank_gtt_hwm:
@@ -911,7 +1040,8 @@ def analyze_fp64_monitor_files(filenames):
                     p(f"  HWM Max:    {stats['max']:>10.1f} MB")
                     p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
                     p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_gtt_hwm), total_ranks)})")
+                    note = format_source_totals_note(len(per_rank_gtt_hwm), total_sources, labels)
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({note})")
                     p()
                 
                 if per_rank_cpu_hwm:
@@ -922,12 +1052,13 @@ def analyze_fp64_monitor_files(filenames):
                     p(f"  HWM Max:    {stats['max']:>10.1f} MB")
                     p(f"  HWM Mean:   {stats['mean']:>10.1f} MB")
                     p(f"  HWM StdDev: {stats['stdev']:>10.2f} MB")
-                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({rank_count_str(len(per_rank_cpu_hwm), total_ranks)})")
+                    note = format_source_totals_note(len(per_rank_cpu_hwm), total_sources, labels)
+                    p(f"  HWM Total:  {total_hwm/1024:>10.2f} GB ({note})")
                     p()
         
         p("=" * 70)
         
-        # Now write the detailed per-rank report (file only, not stdout)
+        # Detailed per-source report (file only, not stdout)
         f.write("\n\n")
         write_detailed_report_to_file(filenames, f)
     
@@ -1002,7 +1133,7 @@ def main():
         print("Usage: fp64_monitor_analyze_results.py <csv_file> [csv_file2 ...]")
         print("       fp64_monitor_analyze_results.py fp64_monitor_*.csv")
         print()
-        print("When multiple files are provided, data is aggregated across all ranks.")
+        print("When multiple files are provided, data is aggregated (see script docstring).")
         print("Files from the same (hostname, GPU) are deduplicated to avoid double-counting.")
         sys.exit(1)
     
