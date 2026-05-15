@@ -4,7 +4,7 @@
 // Load via ROCP_TOOL_LIBRARIES to profile a HIP application.
 //
 // Usage:
-//   ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool_<rocm-version>.so ./your_hip_app
+//   ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool_<rocm-major>.so ./your_hip_app
 //
 // Environment variables:
 //   FP64_MONITOR_INTERVAL  - Sampling interval in ms (default: 1000)

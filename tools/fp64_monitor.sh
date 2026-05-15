@@ -7,8 +7,8 @@
 # different aspects of GPU workloads.
 #
 # Usage:
-#   fp64_monitor.sh [options] -- <application> [app_args...]
-#   mpirun -np 4 fp64_monitor.sh [options] -- ./your_mpi_app [args...]
+#   fp64_monitor.sh --rocm <MAJOR> [options] -- <application> [app_args...]
+#   mpirun -np 4 fp64_monitor.sh --rocm <MAJOR> [options] -- ./your_mpi_app [args...]
 #
 # For detailed help: fp64_monitor.sh --fullhelp
 #
@@ -16,7 +16,7 @@
 # Use patched nohwloc libfabric instead of /lib64 version to prevent exit crash -JCG 5/1/26
 export LD_LIBRARY_PATH="/usr/tce/packages/libfabric/libfabric-2.3.1nohwloc/lib64:${LD_LIBRARY_PATH}"
 
-ROCM_VERSION_STRING=@ROCM_VERSION_STRING@
+ROCM_VERSION_STRING=""
 VERSION_PROVIDED=0
 INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
@@ -35,13 +35,13 @@ show_help() {
     cat << 'EOF'
 FP64 Monitor - GPU Instruction Profiling Tool
 
-Usage: fp64_monitor.sh [options] -- <application> [app_args...]
+Usage: fp64_monitor.sh --rocm MAJOR [options] -- <application> [app_args...]
 
 Options:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
+  --rocm MAJOR          (required) ROCm major for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpus IDS            Logical GPU ids: comma-separated (e.g. 0,1,2) or "all". See --fullhelp.
   --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
@@ -62,13 +62,13 @@ show_fullhelp() {
     cat << 'EOF'
 FP64 Monitor - GPU Instruction Profiling Tool
 
-Usage: fp64_monitor.sh [options] -- <application> [app_args...]
+Usage: fp64_monitor.sh --rocm MAJOR [options] -- <application> [app_args...]
 
 GENERAL OPTIONS:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --rocm VERSION        ROCm version (default: @ROCM_VERSION_STRING@)
+  --rocm MAJOR          (required) ROCm major for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpus IDS            Logical GPU ids (comma-separated) or "all" for every visible GPU. Overrides ROCR when set.
   --verbose             Enable verbose output and rocprofiler-sdk logging
@@ -134,23 +134,23 @@ ENVIRONMENT VARIABLES (overridden by command line options):
   FP64_MONITOR_VERBOSE       Set to 1 for verbose output
 
 EXAMPLES:
-  # Basic FP64 profiling
-  fp64_monitor.sh -- ./my_app
+  # Basic FP64 profiling (ROCm major must match installed libfp64_monitor_tool_<MAJOR>.so)
+  fp64_monitor.sh --rocm 7 -- ./my_app
 
   # Profile with memory monitoring and 500ms sampling
-  fp64_monitor.sh --interval 500 --use-amdsmi -- ./my_app
+  fp64_monitor.sh --rocm 7 --interval 500 --use-amdsmi -- ./my_app
 
   # High-level instruction mix analysis
-  fp64_monitor.sh --counters highlevel --use-amdsmi -- ./my_app
+  fp64_monitor.sh --rocm 7 --counters highlevel --use-amdsmi -- ./my_app
 
   # MPI application with temp storage
-  mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./my_mpi_app
+  mpirun -np 4 fp64_monitor.sh --rocm 7 --use-amdsmi --tmpdir /dev/shm -- ./my_mpi_app
 
   # Verbose output for debugging
-  fp64_monitor.sh --verbose --counters fp64 -- ./my_app
+  fp64_monitor.sh --rocm 7 --verbose --counters fp64 -- ./my_app
 
   # Every visible logical GPU (one output file per GPU by default)
-  fp64_monitor.sh --gpus all -- ./my_app
+  fp64_monitor.sh --rocm 7 --gpus all -- ./my_app
 
 GPU SELECTION (fp64_monitor.sh):
   Precedence: --gpus > FP64_MONITOR_GPUS (environment) > ROCR_VISIBLE_DEVICES > default 0.
@@ -166,6 +166,9 @@ OUTPUT:
   - Percentages relative to total instructions
   - Memory high-water marks (if --use-amdsmi is used)
   - A detailed report is saved to fp64_report.txt
+
+CONTACT:
+  For issues, comments, or questions contact: kevin.huck@amd.com
 
 EOF
     exit 0
@@ -251,6 +254,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --rocm is required (selects libfp64_monitor_tool_<MAJOR>.so next to this script).
+if [ "${VERSION_PROVIDED:-0}" -ne 1 ]; then
+    echo "$SCRIPT_NAME: Error: --rocm MAJOR is required (e.g. --rocm 7 for ROCm 7.x)." >&2
+    echo "$SCRIPT_NAME: Example: $SCRIPT_NAME --rocm 7 --interval 1000 -- ./your_hip_app" >&2
+    exit 1
+fi
+
 
 # Detect MPI rank from environment
 get_mpi_rank() {
@@ -281,46 +291,13 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # Get MPI rank
 MPI_RANK=$(get_mpi_rank)
 
-if [ $VERSION_PROVIDED -eq 0 ] ; then
-    failed=0
-    # Attempt to identify the executable requirements
-    executable=$(echo $APP_ARGS | awk '{print $1}')
-    # Grep will set an error condition on failure, so don't exit :D
-    set +e
-    executable_type=$(file $executable | grep -c "ELF")
-    set -e
-    if [ $executable_type -eq 1 ] ; then
-        FILENAME=$(ldd $executable | grep libhsa-runtime | head -n 1 | awk '{print $3}')
-        version=$(echo "$FILENAME" | sed -r 's/.*rocm-([0-9.]+)\/.*/\1/')
-        MAJOR="${version%%.*}"
-        if [ "$MAJOR" -eq "7" ] ; then
-            ROCM_VERSION_STRING=7.2.1
-        elif [ "$MAJOR" -eq "6" ] ; then
-            ROCM_VERSION_STRING=6.4.3
-        else
-            failed=1
-        fi
-    else
-        failed=1
-    fi
+# Normalize to major only (first dotted field): e.g. --rocm 7.13 -> 7
+ROCM_VERSION_STRING="${ROCM_VERSION_STRING%%.*}"
+if ! [[ "${ROCM_VERSION_STRING}" =~ ^[0-9]+$ ]] ; then
     if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
-        if [ $failed -eq 1 ] ; then
-            echo "$SCRIPT_NAME: Unable to detect ROCm version from executable, using $ROCM_VERSION_STRING"
-        else
-            echo "$SCRIPT_NAME: Detected ROCm major version $MAJOR, using tool version $ROCM_VERSION_STRING"
-        fi
+        echo "$SCRIPT_NAME: ROCM_VERSION_STRING must be a ROCm major (non-negative integer), got: ${ROCM_VERSION_STRING}" >&2
     fi
-fi
-
-MAJOR="${ROCM_VERSION_STRING%%.*}"
-if [ "$MAJOR" -eq "7" ] ; then
-    ROCM_VERSION_STRING=7.13.0a20260324-gfx94X
-elif [ "$MAJOR" -eq "6" ] ; then
-    ROCM_VERSION_STRING=6.4.3
-else
-    if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
-        echo "$SCRIPT_NAME: Only major versions 6 and 7 are supported." >&2
-    fi
+    exit 1
 fi
 
 # Find library - expected to be in ../lib relative to script (install layout: bin/script, lib/library).
