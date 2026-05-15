@@ -150,9 +150,9 @@ def build_report_labels(layout):
     if layout == 'mpi':
         return {
             'layout': layout,
-            'summary_count': 'MPI ranks',
-            'aggregated': 'aggregated across all MPI ranks',
-            'per_source_section': 'Per-MPI-rank summary',
+            'summary_count': 'MPI ranks x monitored GPUs',
+            'aggregated': 'aggregated across all MPI ranks x GPUs',
+            'per_source_section': 'Per-MPI-GPU summary',
             'stats_across': 'Statistical analysis across MPI ranks',
             'no_activity': 'No active samples found in any MPI rank file.',
             'memory_scope': 'per MPI rank',
@@ -212,7 +212,7 @@ def format_source_totals_note(valid, total, labels):
     if layout == 'mpi':
         if valid == total:
             return f"{valid} MPI ranks"
-        return f"{valid} of {total} MPI rank files"
+        return f"{valid} of {total} MPI rank x GPU files"
     if valid == total:
         return f"{valid} files"
     return f"{valid} of {total} files"
@@ -734,7 +734,7 @@ def analyze_fp64_monitor_files(filenames):
             if layout == 'multi_gpu':
                 p("(Each file is one GPU from the same process; totals sum counters across GPUs.)")
             elif layout == 'mpi':
-                p("(Each file is one MPI rank; totals sum counters across ranks.)")
+                p("(Each file is one MPI rank x one GPU; totals sum counters across GPUs.)")
             else:
                 p("(Totals sum each file's final counter maxima; MPI vs multi-GPU not inferred from names.)")
             p()

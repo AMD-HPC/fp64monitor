@@ -22,7 +22,7 @@ INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
 if type -p flux &> /dev/null; then
     jid=`flux getattr jobid`
-    OUTPUT_DIR_POSTFIX="_${jid}"
+    OUTPUT_DIR_POSTFIX="_${jid}_${FLUX_JOB_ID}"
     OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}${OUTPUT_DIR_POSTFIX}"
     export FP64_MONITOR_DIR=${OUTPUT_DIR}
 fi
@@ -41,7 +41,7 @@ Options:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --rocm MAJOR          (required) ROCm major for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
+  --rocm MAJOR          (required) ROCm major version for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpus IDS            Logical GPU ids: comma-separated (e.g. 0,1,2) or "all". See --fullhelp.
   --counters TYPE       Counter set: fp64, fp32, fp16, int, salu, highlevel, highlevel2
@@ -68,7 +68,7 @@ GENERAL OPTIONS:
   --interval MS         Sampling interval in milliseconds (default: 1000)
   --output PATTERN      Output file pattern (default: auto-generated)
   --format FORMAT       Output format: csv, json, or text (default: csv)
-  --rocm MAJOR          (required) ROCm major for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
+  --rocm MAJOR          (required) ROCm major version for libfp64_monitor_tool_<MAJOR>.so (e.g. 7)
   --dir DIR             Output directory (default: fp64_monitor_output)
   --gpus IDS            Logical GPU ids (comma-separated) or "all" for every visible GPU. Overrides ROCR when set.
   --verbose             Enable verbose output and rocprofiler-sdk logging
@@ -254,14 +254,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --rocm is required (selects libfp64_monitor_tool_<MAJOR>.so next to this script).
-if [ "${VERSION_PROVIDED:-0}" -ne 1 ]; then
-    echo "$SCRIPT_NAME: Error: --rocm MAJOR is required (e.g. --rocm 7 for ROCm 7.x)." >&2
-    echo "$SCRIPT_NAME: Example: $SCRIPT_NAME --rocm 7 --interval 1000 -- ./your_hip_app" >&2
-    exit 1
-fi
-
-
 # Detect MPI rank from environment
 get_mpi_rank() {
     # Check various MPI implementations' rank environment variables
@@ -290,6 +282,15 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # Get MPI rank
 MPI_RANK=$(get_mpi_rank)
+
+# --rocm is required (selects libfp64_monitor_tool_<MAJOR>.so next to this script).
+if [ "${VERSION_PROVIDED:-0}" -ne 1 ]; then
+    if [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ] ; then
+        echo "$SCRIPT_NAME: Error: --rocm MAJOR is required (e.g. --rocm 7 for ROCm 7.x)." >&2
+        echo "$SCRIPT_NAME: Example: $SCRIPT_NAME --rocm 7 --interval 1000 -- ./your_hip_app" >&2
+        exit 1
+    fi
+fi
 
 # Normalize to major only (first dotted field): e.g. --rocm 7.13 -> 7
 ROCM_VERSION_STRING="${ROCM_VERSION_STRING%%.*}"
