@@ -1,4 +1,4 @@
-source $HOME/src/therock-tarball/sourceme-7.13.0a20260507-gfx94X.sh
+module load rocm/7.13.0-gfx94x
 rm -rf build install
 PATH=${ROCM_PATH}/llvm/bin:$PATH
 cmake -B build -S . -DCMAKE_BUILD_TYPE=RelWithDebInfo \
