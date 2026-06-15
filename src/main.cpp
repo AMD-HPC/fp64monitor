@@ -31,7 +31,7 @@ void print_usage(const char* prog_name) {
               << "  -V, --version           Show version information\n"
               << "  -l, --list-gpus         List available GPUs and exit\n"
               << "  -c, --list-counters     List available counters for a GPU\n"
-              << "  -g, --gpu ID            GPU ID for queries (default: 0)\n"
+              << "  -g, --gpus ID           GPU id for list-counters (default: 0); --gpu accepted as alias\n"
               << "  -s, --show-usage        Show detailed usage instructions\n"
               << "\n"
               << "Examples:\n"
@@ -40,7 +40,7 @@ void print_usage(const char* prog_name) {
               << "  " << prog_name << " --show-usage\n"
               << "\n"
               << "For monitoring, use the tool library with ROCP_TOOL_LIBRARIES:\n"
-              << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./your_hip_app\n"
+              << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./your_hip_app\n"
               << "\n";
 }
 
@@ -102,7 +102,7 @@ void list_counters(int gpu_id) {
         if (counters.empty()) {
             std::cout << "No counters found (counter enumeration may require tool mode).\n";
             std::cout << "\nTo use monitoring, run with ROCP_TOOL_LIBRARIES:\n";
-            std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./your_app\n";
+            std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./your_app\n";
             return;
         }
         
@@ -156,7 +156,7 @@ void show_usage_instructions() {
     std::cout << "BASIC USAGE\n";
     std::cout << std::string(78, '-') << "\n";
     std::cout << "Monitor a HIP application using ROCP_TOOL_LIBRARIES:\n\n";
-    std::cout << "  ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool_<rocm-version>.so ./your_hip_app\n\n";
+    std::cout << "  ROCP_TOOL_LIBRARIES=/path/to/libfp64_monitor_tool_<major>.so ./your_hip_app\n\n";
     
     std::cout << "By default, output is written to a unique CSV file per process:\n";
     std::cout << "  - With MPI: fp64_monitor_<rank>.csv\n";
@@ -172,9 +172,9 @@ void show_usage_instructions() {
     std::cout << std::setw(28) << "FP64_MONITOR_INTERVAL"
               << std::setw(15) << "100"
               << "Sampling interval (ms)\n";
-    std::cout << std::setw(28) << "FP64_MONITOR_GPU"
+    std::cout << std::setw(28) << "FP64_MONITOR_GPUS"
               << std::setw(15) << "0"
-              << "GPU ID to monitor\n";
+              << "Comma-separated ids or \"all\" (tool library; see fp64_monitor.sh)\n";
     std::cout << std::setw(28) << "FP64_MONITOR_OUTPUT"
               << std::setw(15) << "auto"
               << "Output file (see patterns below)\n";
@@ -198,22 +198,22 @@ void show_usage_instructions() {
     std::cout << "EXAMPLES\n";
     std::cout << std::string(78, '-') << "\n";
     std::cout << "# Basic monitoring (auto-generates unique file)\n";
-    std::cout << "ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./my_app\n\n";
+    std::cout << "ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./my_app\n\n";
     
     std::cout << "# MPI application (each rank writes to fp64_monitor_<rank>.csv)\n";
-    std::cout << "mpirun -np 4 env ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./my_mpi_app\n\n";
+    std::cout << "mpirun -np 4 env ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./my_mpi_app\n\n";
     
     std::cout << "# Custom output filename pattern\n";
     std::cout << "FP64_MONITOR_OUTPUT='results/gpu_rank%r.csv' \\\n";
-    std::cout << "  mpirun -np 4 env ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./my_app\n\n";
+    std::cout << "  mpirun -np 4 env ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./my_app\n\n";
     
     std::cout << "# Console output with text format\n";
     std::cout << "FP64_MONITOR_OUTPUT=stdout FP64_MONITOR_FORMAT=text \\\n";
-    std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./my_app\n\n";
+    std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./my_app\n\n";
     
     std::cout << "# Fast sampling (50ms) with JSON output\n";
     std::cout << "FP64_MONITOR_INTERVAL=50 FP64_MONITOR_FORMAT=json \\\n";
-    std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<rocm-version>.so ./my_app\n\n";
+    std::cout << "  ROCP_TOOL_LIBRARIES=libfp64_monitor_tool_<major>.so ./my_app\n\n";
     
     std::cout << "MPI RANK DETECTION\n";
     std::cout << std::string(78, '-') << "\n";
@@ -259,7 +259,7 @@ int main(int argc, char* argv[]) {
             list_counters_flag = true;
         } else if (arg == "-s" || arg == "--show-usage") {
             show_usage_flag = true;
-        } else if ((arg == "-g" || arg == "--gpu") && i + 1 < argc) {
+        } else if ((arg == "-g" || arg == "--gpu" || arg == "--gpus") && i + 1 < argc) {
             gpu_id = std::atoi(argv[++i]);
         } else {
             std::cerr << "Unknown option: " << arg << "\n";

@@ -77,13 +77,13 @@ else()
     message(STATUS "AMD SMI support: DISABLED (use -DENABLE_AMD_SMI=ON to enable)")
 endif()
 
-# Determine ROCm version from path (e.g., /opt/rocm-6.0.0 or rocm-7.13.0a20260324-gfx94X)
+# ROCm major version label for tool library / wrapper (e.g. libfp64_monitor_tool_7.so).
+# Derived from ROCM_PATH basename (e.g. rocm-7.13.0a... -> 7); falls back to HIP major, else "unknown".
 if(DEFINED ENV{ROCM_PATH})
     set(_rocm_path "$ENV{ROCM_PATH}")
 elseif(ROCM_PATH)
     set(_rocm_path "${ROCM_PATH}")
 elseif(rocprofiler-sdk_DIR)
-    # Extract from rocprofiler-sdk path
     get_filename_component(_rocm_path "${rocprofiler-sdk_DIR}" DIRECTORY)
     get_filename_component(_rocm_path "${_rocm_path}" DIRECTORY)
     get_filename_component(_rocm_path "${_rocm_path}" DIRECTORY)
@@ -91,23 +91,35 @@ else()
     set(_rocm_path "")
 endif()
 
+set(ROCM_VERSION_STRING "")
 if(_rocm_path)
-    # Get the last component of the path
     get_filename_component(_rocm_dirname "${_rocm_path}" NAME)
-    # Try to extract version (handle patterns like "rocm-6.0.0" or "rocm-7.13.0a20260324-gfx94X")
     string(REGEX MATCH "[0-9]+\\.[0-9]+\\.?[0-9]*[a-zA-Z0-9-]*" _extracted_version "${_rocm_dirname}")
     if(_extracted_version)
-        set(ROCM_VERSION_STRING "${_extracted_version}")
-    else()
-        set(ROCM_VERSION_STRING "${_rocm_dirname}")
+        string(REGEX MATCH "^[0-9]+" ROCM_VERSION_STRING "${_extracted_version}")
     endif()
-else()
+endif()
+
+if(NOT ROCM_VERSION_STRING MATCHES "^[0-9]+$")
+    if(DEFINED hip_VERSION AND hip_VERSION)
+        string(REGEX MATCH "^[0-9]+" _hip_major "${hip_VERSION}")
+        if(_hip_major MATCHES "^[0-9]+$")
+            set(ROCM_VERSION_STRING "${_hip_major}")
+        endif()
+    elseif(DEFINED HIP_VERSION AND HIP_VERSION)
+        string(REGEX MATCH "^[0-9]+" _hip_major "${HIP_VERSION}")
+        if(_hip_major MATCHES "^[0-9]+$")
+            set(ROCM_VERSION_STRING "${_hip_major}")
+        endif()
+    endif()
+endif()
+
+if(NOT ROCM_VERSION_STRING MATCHES "^[0-9]+$")
     set(ROCM_VERSION_STRING "unknown")
 endif()
 
-# Print configuration info
 message(STATUS "ROCm path: ${ROCM_PATH}")
-message(STATUS "ROCm version: ${ROCM_VERSION_STRING}")
+message(STATUS "ROCm major (tool suffix): ${ROCM_VERSION_STRING}")
 message(STATUS "rocprofiler-sdk found: ${rocprofiler-sdk_DIR}")
 
 # Include directories

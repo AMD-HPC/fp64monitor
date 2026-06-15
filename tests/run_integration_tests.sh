@@ -12,7 +12,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${1:-${SCRIPT_DIR}/../build}"
 
-# Tool library: CMake emits libfp64_monitor_tool_<rocm-version>.so (legacy unversioned name still accepted)
+# Tool library: CMake emits libfp64_monitor_tool_<rocm-major>.so (legacy unversioned name still accepted)
 shopt -s nullglob
 MONITOR_CAND=( "${BUILD_DIR}"/libfp64_monitor_tool_*.so )
 shopt -u nullglob

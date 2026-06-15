@@ -26,15 +26,15 @@ Install (recommended for the wrapper script, which expects `bin/` + `lib/`):
 cmake --install build --prefix /your/install/prefix
 ```
 
-### Profiling library name (ROCm version suffix)
+### Profiling library name (ROCm major suffix)
 
-The injected shared library is built as CMake target `fp64_monitor_tool_<version>` and installed as:
+The injected shared library is built as CMake target `fp64_monitor_tool_<major>` and installed as:
 
-`lib/libfp64_monitor_tool_<ROCm-version>.so`
+`lib/libfp64_monitor_tool_<major>.so`
 
-`<ROCm-version>` is derived at **configure** time from your `ROCM_PATH` / `rocprofiler-sdk` location (for example `7.2.0` or `7.13.0a20260324-gfx94X`). The same string is baked into **`fp64_monitor.sh`** as `ROCM_VERSION_STRING`, so the wrapper loads the matching `.so` next to `prefix/lib/`.
+`<major>` is the **ROCm major** only (e.g. `6`, `7`), derived at **configure** time from the `ROCM_PATH` basename (e.g. `rocm-7.13.0a...` → `7`) or from HIP’s reported version if the path has no digits. The built tool is installed as **`libfp64_monitor_tool_<major>.so`** next to `prefix/lib/`.
 
-- **`fp64_monitor.sh --rocm <string>`** overrides that string when you have several installs and need the script to point at a different `libfp64_monitor_tool_<string>.so`.
+- **`fp64_monitor.sh --rocm <major>`** is **required** and must match that installed library (you may pass `7` or `7.13`; only the major is used).
 - For **`ROCP_TOOL_LIBRARIES`** by hand, use the exact filename under your build or install `lib/` (e.g. `ls build/libfp64_monitor_tool_*.so`).
 
 The **`measure_flops`** binary only lists GPUs and counters; live monitoring uses the versioned tool `.so` above.
@@ -44,23 +44,25 @@ The **`measure_flops`** binary only lists GPUs and counters; live monitoring use
 **Wrapper (recommended after install):**
 
 ```bash
-fp64_monitor.sh -- ./your_hip_app [args...]
-fp64_monitor.sh --interval 500 --counters highlevel --use-amdsmi -- ./your_app
-mpirun -np 4 fp64_monitor.sh --use-amdsmi --tmpdir /dev/shm -- ./mpi_app
+fp64_monitor.sh --rocm 7 -- ./your_hip_app [args...]
+fp64_monitor.sh --rocm 7 --interval 500 --counters highlevel --use-amdsmi -- ./your_app
+mpirun -np 4 fp64_monitor.sh --rocm 7 --use-amdsmi --tmpdir /dev/shm -- ./mpi_app
 ```
 
-`fp64_monitor.sh --help` / `--fullhelp` document options (interval, format, output pattern, GPU id, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
+`fp64_monitor.sh --help` / `--fullhelp` document options (**`--rocm`** is required, interval, format, output pattern, **`--gpus`**, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
 
-**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_${ROCM_VERSION_STRING}.so` from the script’s directory. If **`ROCR_VISIBLE_DEVICES`** is set, it exports **`FP64_MONITOR_GPU`** to that value. Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
+**GPU selection (wrapper):** **`--gpus IDS`** (comma-separated logical IDs, or **`all`** for every GPU visible after ROCR) **>** **`FP64_MONITOR_GPUS`** **>** **`ROCR_VISIBLE_DEVICES`** **>** default **`0`**. Use **`--gpus`** (e.g. **`--gpus 2`** or **`--gpus 0,1`**) to override ROCR when you only want to monitor a subset. **Multiple GPUs:** one output file per GPU (default names include **`_gpu<N>_`**). Custom **`FP64_MONITOR_OUTPUT`** with several GPUs must include **`%g`** (or the wrapper inserts **`_gpu%g`** before the extension) so paths stay unique.
+
+**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_<major>.so` from the script’s directory (using **`--rocm`**) and sets **`FP64_MONITOR_GPUS`** per the precedence above when **`ROCR_VISIBLE_DEVICES`** lists devices (e.g. `0,1,2,3`). Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
 
 **Direct injection:**
 
 ```bash
-export ROCP_TOOL_LIBRARIES=/path/to/lib/libfp64_monitor_tool_<ROCm-version>.so
+export ROCP_TOOL_LIBRARIES=/path/to/lib/libfp64_monitor_tool_<major>.so
 ./your_hip_app
 ```
 
-**Environment** (when not using the wrapper): `FP64_MONITOR_INTERVAL`, `FP64_MONITOR_GPU`, `FP64_MONITOR_OUTPUT`, `FP64_MONITOR_FORMAT` (`csv`/`json`/`text`), `FP64_MONITOR_DIR`, `FP64_MONITOR_TMPDIR`, `FP64_MONITOR_COUNTERS`, `FP64_MONITOR_USE_AMDSMI`, `FP64_MONITOR_PRELOAD`, `FP64_MONITOR_ANALYZE`, `FP64_MONITOR_VERBOSE`. Output naming supports MPI rank detection and patterns with `%r`, `%p`, `%h`; use `FP64_MONITOR_OUTPUT=stdout` for the console.
+**Environment** (when not using the wrapper): `FP64_MONITOR_INTERVAL`, **`FP64_MONITOR_GPUS`** (comma-separated logical IDs or **`all`**), `FP64_MONITOR_OUTPUT`, `FP64_MONITOR_FORMAT` (`csv`/`json`/`text`), `FP64_MONITOR_DIR`, `FP64_MONITOR_TMPDIR`, `FP64_MONITOR_COUNTERS`, `FP64_MONITOR_USE_AMDSMI`, `FP64_MONITOR_PRELOAD`, `FP64_MONITOR_ANALYZE`, `FP64_MONITOR_VERBOSE`. Output naming supports MPI rank detection and patterns with `%r`, `%p`, `%h`; use `FP64_MONITOR_OUTPUT=stdout` for the console.
 
 Shorter runs: try **50–100 ms** intervals; longer jobs often use **500–1000 ms**. Samples are **cumulative** totals; use the Python tools or deltas between rows for per-interval rates.
 
@@ -93,7 +95,7 @@ With `BUILD_TESTS` on, from the build directory:
 ./tests/test_instruction_analyzer
 ./tests/run_integration_tests.sh
 # Example monitored workload:
-FP64_MONITOR_INTERVAL=50 ROCP_TOOL_LIBRARIES="$PWD/libfp64_monitor_tool_<ROCm-version>.so" ./tests/stream_triad_fp64
+FP64_MONITOR_INTERVAL=50 ROCP_TOOL_LIBRARIES="$PWD/libfp64_monitor_tool_<major>.so" ./tests/stream_triad_fp64
 ```
 
 Other HIP targets include `stream_triad_fp32`, `test_mfma_direct`, `test_spmv`, and optionally `test_mfma_rocwmma` when rocWMMA is found. See `tests/README.md`.
