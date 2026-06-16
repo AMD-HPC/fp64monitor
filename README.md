@@ -18,7 +18,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ```
 
-CMake options: **`ENABLE_AMD_SMI`** (default **OFF**; set **`-DENABLE_AMD_SMI=ON`** to link **libamd_smi** and enable GPU memory columns for `--use-amdsmi` / `FP64_MONITOR_USE_AMDSMI`), **`BUILD_TESTS`** (default ON). GPU arch for HIP tests defaults in `tests/CMakeLists.txt`; override with `-DCMAKE_HIP_ARCHITECTURES=gfx942` (or your ASIC) if needed.
+CMake options: **`ENABLE_AMD_SMI`** (default **OFF**; set **`-DENABLE_AMD_SMI=ON`** to link **libamd_smi** and enable GPU memory columns for `--use-amdsmi` / `FP64_MONITOR_USE_AMDSMI`), **`BUILD_TESTS`** (default **OFF**; set **`-DBUILD_TESTS=ON`** for HIP test binaries and `ctest`). GPU arch for HIP tests defaults in `tests/CMakeLists.txt`; override with `-DCMAKE_HIP_ARCHITECTURES=gfx942` (or your ASIC) if needed.
 
 Install (recommended for the wrapper script, which expects `bin/` + `lib/`):
 
@@ -41,6 +41,8 @@ The **`measure_flops`** binary only lists GPUs and counters; live monitoring use
 
 ## Usage
 
+Configure and build on a machine that matches where you will run (GPU present, ROCm loaded, **`CMAKE_HIP_ARCHITECTURES`** / **`GPU_TARGETS`** aligned with the ASIC). On shared clusters, batch and interactive jobs usually run on compute nodes; use your center’s documented way to obtain a GPU allocation. After **`cmake --install`**, put **`prefix/bin`** on **`PATH`** or invoke **`fp64_monitor.sh`** by full path so it can resolve **`../lib/libfp64_monitor_tool_<major>.so`** next to your install layout.
+
 **Wrapper (recommended after install):**
 
 ```bash
@@ -48,6 +50,8 @@ fp64_monitor.sh --rocm 7 -- ./your_hip_app [args...]
 fp64_monitor.sh --rocm 7 --interval 500 --counters highlevel --use-amdsmi -- ./your_app
 mpirun -np 4 fp64_monitor.sh --rocm 7 --use-amdsmi --tmpdir /dev/shm -- ./mpi_app
 ```
+
+Use the same wrapper in whatever parallel or batch launcher your system provides (for example Slurm **`srun`**, Flux **`flux run`**, or the **`mpiexec`** line from your job script): each MPI rank should execute **`fp64_monitor.sh`** with the same **`--rocm`** and options, then **`--`**, then your application and its arguments.
 
 `fp64_monitor.sh --help` / `--fullhelp` document options (**`--rocm`** is required, interval, format, output pattern, **`--gpus`**, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
 
