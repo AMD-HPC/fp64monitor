@@ -1,13 +1,15 @@
 # CMakeLists.txt for test programs
 
 # Set GPU architecture - detect or use gfx942 for MI300
-if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
-    if(DEFINED GPU_TARGETS)
-        set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS} CACHE STRING "GPU architectures to compile for")
+if(NOT DEFINED GPU_TARGETS)
+    if(DEFINED CMAKE_HIP_ARCHITECTURES)
+        message(WARNING "Setting HIP arch for tests to ${CMAKE_HIP_ARCHITECTURES}.")
     else()
-    #set(CMAKE_HIP_ARCHITECTURES "gfx942" CACHE STRING "GPU architectures to compile for")
-    message(FATAL_ERROR "Error: to build the tests, please set the gfx arch with the CMAKE_HIP_ARCHITECTURES or GPU_TARGETS CMake variable. For example, add '-DGPU_TARGETS=gfx942' for MI300A or MI300X.")
+        message(FATAL_ERROR "Error: to build the tests, please set the gfx arch with the CMAKE_HIP_ARCHITECTURES or GPU_TARGETS CMake variable. For example, add '-DGPU_TARGETS=gfx942' for MI300A or MI300X.")
     endif()
+else()
+    message(WARNING "Setting HIP arch for tests to ${GPU_TARGETS}.")
+    set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS} CACHE STRING "GPU architectures to compile for")
 endif()
 
 # STREAM Triad FP64 test (HIP workload for validation)
