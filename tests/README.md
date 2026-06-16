@@ -26,7 +26,7 @@ This program provides several kernel variants with predictable FP64 instruction 
 
 ```bash
 # Source ROCm environment
-source /home/kevihuck/src/therock-tarball/sourceme-7.13.0a20260324-gfx94X.sh
+module load rocm/7.13.0
 
 # Build
 cd tests

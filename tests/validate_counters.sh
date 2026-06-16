@@ -30,14 +30,7 @@ KERNEL_TYPE=${3:-1}       # Default to explicit FMA kernel
 
 # Source ROCm environment if not already set
 if [ -z "$ROCM_PATH" ]; then
-    SOURCEME="/home/kevihuck/src/therock-tarball/sourceme-7.13.0a20260324-gfx94X.sh"
-    if [ -f "$SOURCEME" ]; then
-        echo "Sourcing ROCm environment..."
-        source "$SOURCEME"
-    else
-        echo "ERROR: ROCM_PATH not set and sourceme script not found"
-        exit 1
-    fi
+    module load rocm/7.13.0-gfx94x
 fi
 
 echo "========================================================"
