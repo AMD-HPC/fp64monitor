@@ -104,11 +104,194 @@ FP64_MONITOR_INTERVAL=50 ROCP_TOOL_LIBRARIES="$PWD/libfp64_monitor_tool_<major>.
 
 Other HIP targets include `stream_triad_fp32`, `test_mfma_direct`, `test_spmv`, and optionally `test_mfma_rocwmma` when rocWMMA is found. See `tests/README.md`.
 
-## Interpreting results
+## Example output
 
-For FP64-heavy kernels, **FP64 as a fraction of all instructions is often on the order of ~10–15%**, because indexing, control flow, and memory instructions are not FP64. That is expected, not necessarily a bug.
+```bash
+./build/bin/fp64_monitor.sh --rocm 7 --interval 100 -- ./build/tests/stream_triad_fp64
+```
 
-On multi-die GPUs (e.g. MI300), counters are aggregated across dies as implemented in the sampler.
+```text
+########################################################
+#          STREAM Triad FP64 Test Program              #
+########################################################
+
+This program generates known FP64 instruction counts
+for validating hardware counter collection.
+
+Device: AMD Instinct MI300A
+  Compute Units: 228
+  Clock Rate:    2100 MHz
+  Memory:        128 GB
+
+Configuration:
+  Array size:   1048576 elements (8 MB per array)
+  Iterations:   100
+  Grid:         4096 blocks x 256 threads
+  Scalar value: 3
+
+======================================================================
+Kernel: STREAM Triad (standard)
+----------------------------------------------------------------------
+Array size:              1048576 elements
+Iterations:                  100 (+ 5 warmup)
+Wavefronts/iter:           16384 (elements/64)
+----------------------------------------------------------------------
+Expected counter values (per-wavefront, cumulative):
+  SQ_INSTS_VALU_ADD_F64:               0
+  SQ_INSTS_VALU_MUL_F64:               0
+  SQ_INSTS_VALU_FMA_F64:         1720320
+  Total FP64 VALU:               1720320
+======================================================================
+
+Running 100 iterations...
+
+Performance:
+  Time:      0.54 ms
+  Bandwidth: 4641.40 GB/s
+  GFLOP/s:   386.78
+
+======================================================================
+Kernel: STREAM Triad (explicit FMA)
+----------------------------------------------------------------------
+Array size:              1048576 elements
+Iterations:                  100 (+ 5 warmup)
+Wavefronts/iter:           16384 (elements/64)
+----------------------------------------------------------------------
+Expected counter values (per-wavefront, cumulative):
+  SQ_INSTS_VALU_ADD_F64:               0
+  SQ_INSTS_VALU_MUL_F64:               0
+  SQ_INSTS_VALU_FMA_F64:         1720320
+  Total FP64 VALU:               1720320
+======================================================================
+
+Running 100 iterations...
+
+Performance:
+  Time:      0.59 ms
+  Bandwidth: 4287.54 GB/s
+  GFLOP/s:   357.29
+
+======================================================================
+Kernel: STREAM Triad (separate MUL+ADD)
+----------------------------------------------------------------------
+Array size:              1048576 elements
+Iterations:                  100 (+ 5 warmup)
+Wavefronts/iter:           16384 (elements/64)
+----------------------------------------------------------------------
+Expected counter values (per-wavefront, cumulative):
+  SQ_INSTS_VALU_ADD_F64:         1720320
+  SQ_INSTS_VALU_MUL_F64:         1720320
+  SQ_INSTS_VALU_FMA_F64:               0
+  Total FP64 VALU:               3440640
+======================================================================
+
+Running 100 iterations...
+
+Performance:
+  Time:      1.14 ms
+  Bandwidth: 2213.89 GB/s
+  GFLOP/s:   184.49
+
+======================================================================
+Kernel: Vector Add (ADD only)
+----------------------------------------------------------------------
+Array size:              1048576 elements
+Iterations:                  100 (+ 5 warmup)
+Wavefronts/iter:           16384 (elements/64)
+----------------------------------------------------------------------
+Expected counter values (per-wavefront, cumulative):
+  SQ_INSTS_VALU_ADD_F64:         1720320
+  SQ_INSTS_VALU_MUL_F64:               0
+  SQ_INSTS_VALU_FMA_F64:               0
+  Total FP64 VALU:               1720320
+======================================================================
+
+Running 100 iterations...
+
+Performance:
+  Time:      0.61 ms
+  Bandwidth: 4133.05 GB/s
+  GFLOP/s:   172.21
+
+======================================================================
+Kernel: Vector Multiply (MUL only)
+----------------------------------------------------------------------
+Array size:              1048576 elements
+Iterations:                  100 (+ 5 warmup)
+Wavefronts/iter:           16384 (elements/64)
+----------------------------------------------------------------------
+Expected counter values (per-wavefront, cumulative):
+  SQ_INSTS_VALU_ADD_F64:               0
+  SQ_INSTS_VALU_MUL_F64:         1720320
+  SQ_INSTS_VALU_FMA_F64:               0
+  Total FP64 VALU:               1720320
+======================================================================
+
+Running 100 iterations...
+
+Performance:
+  Time:      0.55 ms
+  Bandwidth: 4587.67 GB/s
+  GFLOP/s:   191.15
+
+Verification:
+  Expected a[0]: 2.00
+  Actual a[0]:   2.00
+  Status:        PASS
+
+########################################################
+#                    Test Complete                      #
+########################################################
+
+Waiting for all ranks to exit...
+
+======================================================================
+FP64 Monitor Analysis Summary
+======================================================================
+
+Counter Set:   fp64
+Input files:      1
+Total samples: 5
+Active samples: 1
+Idle samples:   4
+
+----------------------------------------------------------------------
+General Statistics
+----------------------------------------------------------------------
+
+  Total VALU:              72,253,440
+  Total Instr:            196,116,480
+
+----------------------------------------------------------------------
+FP64 Instruction Counts
+----------------------------------------------------------------------
+
+  FP64 ADD:                 3,440,640
+  FP64 MUL:                 3,440,640
+  FP64 FMA:                 3,440,640
+  FP64 Trans:                       0
+  FP64 MFMA:                        0
+  ----------------------------------------
+  Total FP64 VALU:         10,321,920
+
+FP64 %% of VALU:        14.29%
+FP64 %% of Total:        5.26%
+
+----------------------------------------------------------------------
+Memory Usage
+----------------------------------------------------------------------
+
+CPU Resident Memory:
+  HWM Min:        1475.7 MB
+  HWM Max:        1475.7 MB
+  HWM Mean:       1475.7 MB
+  HWM StdDev:       0.00 MB
+  HWM Total:        1.44 GB (1 files)
+
+======================================================================
+
+Report written to: fp64_monitor_output/fp64_report.txt
+```
 
 ## Troubleshooting
 
