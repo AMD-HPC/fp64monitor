@@ -287,7 +287,7 @@ bool mkdir_recursive(const std::string& path) {
 // All ranks attempt creation (mkdir with EEXIST is safe for concurrent calls)
 std::string get_output_directory() {
     const char* dir_env = std::getenv("FP64_MONITOR_DIR");
-    std::string dir_name = dir_env ? dir_env : "fp64_monitor_output";
+    std::string dir_name = dir_env ? dir_env : "./fp64_monitor_output";
     
     // Try to create the directory recursively
     struct stat st;

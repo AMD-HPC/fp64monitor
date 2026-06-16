@@ -20,6 +20,7 @@ ROCM_VERSION_STRING=""
 VERSION_PROVIDED=0
 INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
+FP64_MONITOR_DIR=$(pwd)/fp64_monitor_output
 if type -p flux &> /dev/null; then
     jid=`flux getattr jobid`
     OUTPUT_DIR_POSTFIX="_${jid}_${FLUX_JOB_ID}"
@@ -370,10 +371,13 @@ export LD_PRELOAD="${OLD_LD_PRELOAD}"
 
 # Auto-analyze results (only on rank 0, after a delay)
 ANALYZE="${FP64_MONITOR_ANALYZE:-1}"
-if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; then
-    # Wait for other ranks to finish writing their files
+if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; then # Wait for other ranks to finish writing their files
     echo "Waiting for all ranks to exit..."
-    sleep 5
+    if [ "${MPI_RANK}" = "-1" ] ; then
+        sleep 1
+    else
+        sleep 5
+    fi
     
     # Find the analyze script
     ANALYZE_SCRIPT=""
@@ -403,7 +407,6 @@ if [ "${ANALYZE}" = "1" ] && [ "${MPI_RANK}" = "0" -o "${MPI_RANK}" = "-1" ]; th
         fi
     fi
     
-    echo ${OUTPUT_FILES}
     if [ -n "${OUTPUT_FILES}" ] && [ -f "${ANALYZE_SCRIPT}" ]; then
         echo "" >&2
         # Pass all files to analysis script for aggregated output

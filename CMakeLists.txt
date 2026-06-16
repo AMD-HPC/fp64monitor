@@ -13,12 +13,13 @@ if(NOT CMAKE_HIP_COMPILER)
     endif()
 endif()
 
-project(measure_flops VERSION 1.0.0 LANGUAGES CXX HIP)
+project(fp64monitor VERSION 1.0.0 LANGUAGES CXX HIP)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 
 # Copy HIP flags from CXX if not set
 foreach(_TYPE DEBUG MINSIZEREL RELEASE RELWITHDEBINFO)
@@ -126,7 +127,7 @@ message(STATUS "rocprofiler-sdk found: ${rocprofiler-sdk_DIR}")
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # Main library containing core functionality
-add_library(measure_flops_lib STATIC
+add_library(fp64monitor_lib STATIC
     src/counter_sampler.cpp
     src/instruction_analyzer.cpp
     src/output_formatter.cpp
@@ -134,15 +135,15 @@ add_library(measure_flops_lib STATIC
 )
 
 # Enable PIC for static lib (needed when linking into shared lib)
-set_target_properties(measure_flops_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(fp64monitor_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_include_directories(measure_flops_lib
+target_include_directories(fp64monitor_lib
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(measure_flops_lib
+target_link_libraries(fp64monitor_lib
     PUBLIC
         rocprofiler-sdk::rocprofiler-sdk
         hip::host
@@ -152,42 +153,47 @@ target_link_libraries(measure_flops_lib
 
 # Add AMD SMI if available
 if(HAVE_AMD_SMI)
-    target_include_directories(measure_flops_lib PRIVATE 
+    target_include_directories(fp64monitor_lib PRIVATE 
         ${AMD_SMI_INCLUDE_DIR}
     )
-    target_link_libraries(measure_flops_lib PRIVATE 
+    target_link_libraries(fp64monitor_lib PRIVATE 
         ${AMD_SMI_LIBRARY}
     )
-    target_compile_definitions(measure_flops_lib PRIVATE HAVE_AMD_SMI)
+    target_compile_definitions(fp64monitor_lib PRIVATE HAVE_AMD_SMI)
 endif()
 
-target_compile_options(measure_flops_lib PRIVATE
+target_compile_options(fp64monitor_lib PRIVATE
     -Wall -Wextra
 )
 
 # Main executable (for info commands like --list-gpus, --list-counters)
-add_executable(measure_flops src/main.cpp)
+add_executable(fp64monitor src/main.cpp)
 
-target_link_libraries(measure_flops
+target_link_libraries(fp64monitor
     PRIVATE
-        measure_flops_lib
+        fp64monitor_lib
         Threads::Threads
 )
 
-target_compile_options(measure_flops PRIVATE
+target_compile_options(fp64monitor PRIVATE
     -Wall -Wextra
 )
 
 # Tool library for ROCP_TOOL_LIBRARIES injection
 set(LIBNAME fp64_monitor_tool_${ROCM_VERSION_STRING})
 add_library(${LIBNAME} SHARED 
-    tools/fp64_monitor_tool.cpp
-    tools/preload.cpp
+    src/fp64_monitor_tool.cpp
+    src/preload.cpp
+)
+
+set_target_properties(fp64_monitor_tool_${ROCM_VERSION_STRING} PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
 target_link_libraries(${LIBNAME}
     PRIVATE
-        measure_flops_lib
+        fp64monitor_lib
         rocprofiler-sdk::rocprofiler-sdk
         Threads::Threads
         ${CMAKE_DL_LIBS}
@@ -207,27 +213,41 @@ set_target_properties(${LIBNAME} PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     INSTALL_RPATH_USE_LINK_PATH ON
+    BUILD_WITH_INSTALL_RPATH ON
 )
 
 # Optional: Build tests
-option(BUILD_TESTS "Build test programs" ON)
+option(BUILD_TESTS "Build test programs" OFF)
 if(BUILD_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
 # Install targets
-install(TARGETS measure_flops ${LIBNAME}
+install(TARGETS fp64monitor ${LIBNAME}
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-CONFIGURE_FILE(${PROJECT_SOURCE_DIR}/tools/fp64_monitor.sh
-    ${PROJECT_BINARY_DIR}/tools/fp64_monitor.sh @ONLY)
+CONFIGURE_FILE(${PROJECT_SOURCE_DIR}/src/fp64_monitor.sh
+    ${PROJECT_BINARY_DIR}/bin/fp64_monitor.sh @ONLY)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fp64_monitor_plot_timeseries.py"
+    "${CMAKE_CURRENT_BINARY_DIR}/bin/fp64_monitor_plot_timeseries.py"
+    COPYONLY
+)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fp64_monitor_analyze_results.py"
+    "${CMAKE_CURRENT_BINARY_DIR}/bin/fp64_monitor_analyze_results.py"
+    COPYONLY
+)
 
 # Install wrapper script and analysis tools
-install(PROGRAMS ${PROJECT_BINARY_DIR}/tools/fp64_monitor.sh
+install(PROGRAMS ${PROJECT_BINARY_DIR}/bin/fp64_monitor.sh
     DESTINATION bin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
@@ -239,6 +259,6 @@ install(PROGRAMS tests/fp64_monitor_analyze_results.py tests/fp64_monitor_plot_t
 
 # Install documentation and requirements
 install(FILES README.md requirements.txt
-    DESTINATION share/doc/fp64_monitor
+    DESTINATION share/doc/fp64monitor
     PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ GROUP_WRITE WORLD_READ
 )

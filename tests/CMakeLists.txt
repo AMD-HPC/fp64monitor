@@ -19,7 +19,7 @@ target_compile_options(stream_triad_fp32 PRIVATE -O3)
 
 # Unit test for InstructionAnalyzer
 add_executable(test_instruction_analyzer test_instruction_analyzer.cpp)
-target_link_libraries(test_instruction_analyzer PRIVATE measure_flops_lib)
+target_link_libraries(test_instruction_analyzer PRIVATE fp64monitor_lib)
 target_compile_options(test_instruction_analyzer PRIVATE -Wall -Wextra)
 
 # Direct MFMA test for GEMM analysis validation (inline assembly)
@@ -48,10 +48,40 @@ if(ROCWMMA_INCLUDE_DIR)
     set_target_properties(test_mfma_rocwmma PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
     target_include_directories(test_mfma_rocwmma PRIVATE ${ROCWMMA_INCLUDE_DIR})
     target_compile_options(test_mfma_rocwmma PRIVATE -O3)
-    install(TARGETS test_mfma_rocwmma DESTINATION bin)
 else()
     message(STATUS "rocWMMA not found - skipping test_mfma_rocwmma")
 endif()
 
-# Install test programs
-install(TARGETS stream_triad_fp64 stream_triad_fp32 test_instruction_analyzer test_mfma_direct test_spmv DESTINATION bin)
+# Basic FP64 test
+
+add_test(
+    NAME stream64
+    COMMAND ${PROJECT_BINARY_DIR}/bin/fp64_monitor.sh --rocm ${ROCM_VERSION_STRING} --counters fp64 --interval 100 -- ${PROJECT_BINARY_DIR}/tests/stream_triad_fp64
+)
+add_test(NAME verify_stream64
+    COMMAND ${CMAKE_COMMAND} -E cat "${CMAKE_CURRENT_BINARY_DIR}/fp64_monitor_output/fp64_report.txt"
+)
+set_tests_properties(verify_stream64 PROPERTIES DEPENDS stream64)
+add_test(NAME clean_stream64 COMMAND ${CMAKE_COMMAND} -E rm -r ${CMAKE_CURRENT_BINARY_DIR}/fp64_monitor_output)
+set_tests_properties(clean_stream64 PROPERTIES DEPENDS verify_stream64)
+
+# Test all counters
+
+set(TEST_LIST "fp64" "fp32")
+set(COUNTER_LIST "fp64" "fp32" "fp16" "int" "salu" "highlevel" "highlevel2")
+foreach(MYTEST IN LISTS TEST_LIST)
+    foreach(MYCOUNTER IN LISTS COUNTER_LIST)
+        add_test(
+            NAME test_${MYTEST}_${MYCOUNTER}
+            COMMAND ${PROJECT_BINARY_DIR}/bin/fp64_monitor.sh --rocm ${ROCM_VERSION_STRING} --counters ${MYCOUNTER} --interval 100 -- ${PROJECT_BINARY_DIR}/tests/stream_triad_${MYTEST}
+        )
+        add_test(NAME verify_${MYTEST}_${MYCOUNTER}
+            COMMAND ${CMAKE_COMMAND} -E cat "${CMAKE_CURRENT_BINARY_DIR}/fp64_monitor_output/fp64_report.txt"
+        )
+        set_tests_properties(verify_${MYTEST}_${MYCOUNTER} PROPERTIES DEPENDS ${MYTEST}_${MYCOUNTER})
+        add_test(NAME clean_${MYTEST}_${MYCOUNTER} COMMAND ${CMAKE_COMMAND} -E rm -r ${CMAKE_CURRENT_BINARY_DIR}/fp64_monitor_output)
+        set_tests_properties(clean_${MYTEST}_${MYCOUNTER} PROPERTIES DEPENDS verify_${MYTEST}_${MYCOUNTER})
+    endforeach()
+endforeach()
+
+
