@@ -329,3 +329,5 @@ Last session:
   To resume this session: agent --resume=0b37c3f5-6788-4e61-a783-a282fd4d909f
 
 full transcript: /home/kevihuck/.cursor/projects/home-kevihuck-src-skunk-measure-flops/agent-transcripts/0b37c3f5-6788-4e61-a783-a282fd4d909f/0b37c3f5-6788-4e61-a783-a282fd4d909f.jsonl
+
+agent --resume=d704f5bd-968b-48b2-8ec1-f656c712cabb

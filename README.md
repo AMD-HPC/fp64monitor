@@ -41,7 +41,7 @@ The **`measure_flops`** binary only lists GPUs and counters; live monitoring use
 
 ## Usage
 
-Configure and build on a machine that matches where you will run (GPU present, ROCm loaded, **`CMAKE_HIP_ARCHITECTURES`** / **`GPU_TARGETS`** aligned with the ASIC). On shared clusters, batch and interactive jobs usually run on compute nodes; use your center’s documented way to obtain a GPU allocation. After **`cmake --install`**, put **`prefix/bin`** on **`PATH`** or invoke **`fp64_monitor.sh`** by full path so it can resolve **`../lib/libfp64_monitor_tool_<major>.so`** next to your install layout.
+Configure, build, and install on a machine that matches where you will run. After **`cmake --install`**, put **`prefix/bin`** on **`PATH`** or invoke **`fp64_monitor.sh`** by full path so it can resolve **`../lib/libfp64_monitor_tool_<major>.so`** next to your install layout.
 
 **Wrapper (recommended after install):**
 
@@ -76,11 +76,11 @@ mpirun -np 4 fp64_monitor.sh --rocm 7 --use-amdsmi --tmpdir /dev/shm -- ./mpi_ap
 
 Use the same wrapper in whatever parallel or batch launcher your system provides (for example Slurm **`srun`**, Flux **`flux run`**, or the **`mpiexec`** line from your job script): each MPI rank should execute **`fp64_monitor.sh`** with the same **`--rocm`** and options, then **`--`**, then your application and its arguments.
 
-`fp64_monitor.sh --help` / `--fullhelp` document options (**`--rocm`** is required, interval, format, output pattern, **`--gpus`**, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
+`fp64_monitor.sh --help` / `--fullhelp` document options (ROCm version, interval, format, output pattern, **`--gpus`**, counter set, tmpdir, AMD SMI, preload, analysis). **`--use-amdsmi`** only affects GPU VRAM/GTT reporting when the tool was built with **`ENABLE_AMD_SMI=ON`**; otherwise rank 0 prints a short message and monitoring continues without AMD SMI.
 
-**GPU selection (wrapper):** **`--gpus IDS`** (comma-separated logical IDs, or **`all`** for every GPU visible after ROCR) **>** **`FP64_MONITOR_GPUS`** **>** **`ROCR_VISIBLE_DEVICES`** **>** default **`0`**. Use **`--gpus`** (e.g. **`--gpus 2`** or **`--gpus 0,1`**) to override ROCR when you only want to monitor a subset. **Multiple GPUs:** one output file per GPU (default names include **`_gpu<N>_`**). Custom **`FP64_MONITOR_OUTPUT`** with several GPUs must include **`%g`** (or the wrapper inserts **`_gpu%g`** before the extension) so paths stay unique.
+**GPU selection (wrapper):** **`--gpus IDS`** (comma-separated logical IDs, or **`all`** for every GPU visible after ROCR) **>** **`FP64_MONITOR_GPUS`** **>** **`ROCR_VISIBLE_DEVICES`** **>** default **`ROCR_VISIBLE_DEVICES` setting or `0`**. Use **`--gpus`** (e.g. **`--gpus 2`** or **`--gpus 0,1`**) to override ROCR when you only want to monitor a subset. **Multiple GPUs:** one output file per GPU (default names include **`_gpu<N>_`**). Custom **`FP64_MONITOR_OUTPUT`** with several GPUs must include **`%g`** (or the wrapper inserts **`_gpu%g`** before the extension) so paths stay unique.
 
-**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_<major>.so` from the script’s directory (using **`--rocm`**) and sets **`FP64_MONITOR_GPUS`** per the precedence above when **`ROCR_VISIBLE_DEVICES`** lists devices (e.g. `0,1,2,3`). Unless **`--verbose`**, sets **`GLOG_minloglevel=3`** to quiet rocprofiler-sdk logging. After the app exits, **`LD_PRELOAD`** is restored; if auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** (searching `bin/`, repo `tests/`, etc.) on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
+**`fp64_monitor.sh` behavior (install layout):** Resolves `../lib/libfp64_monitor_tool_<major>.so` from the script’s directory (using **`--rocm`**) and sets **`FP64_MONITOR_GPUS`** per the precedence above when **`ROCR_VISIBLE_DEVICES`** lists devices (e.g. `0,1,2,3`). If auto-analysis is on and this process is MPI rank **0** (or non-MPI), it waits **5 seconds** then runs **`fp64_monitor_analyze_results.py`** on `fp64_monitor_*.csv` under **`FP64_MONITOR_DIR`**. Under **Flux**, the default output directory can get a job-id suffix when Flux is detected at startup.
 
 **Direct injection:**
 
@@ -328,9 +328,7 @@ Generated: fp64_monitor_timeseries.html
 
 - **Zeros:** Match `CMAKE_HIP_ARCHITECTURES` to the ASIC (`rocminfo` / `amd-smi`), confirm kernels run (e.g. `rocprofv3 --hip-trace`), and ensure ROCm is sourced.
 - **“Failed to start context”:** The tool retries during startup; slow HSA init can trigger this briefly.
-- **CMake cannot find rocprofiler-sdk:** `source` ROCm and/or `-DCMAKE_PREFIX_PATH="$ROCM_PATH"`.
-
-More design detail: `IMPLEMENTATION_PLAN.md`.
+- **CMake cannot find rocprofiler-sdk:** load a ROCm module and/or `-DCMAKE_PREFIX_PATH="$ROCM_PATH"`.
 
 ## License
 
