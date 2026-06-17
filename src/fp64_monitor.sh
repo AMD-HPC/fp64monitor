@@ -27,10 +27,14 @@ INSTALL_PREFIX=@CMAKE_INSTALL_PREFIX@
 OUTPUT_DIR_POSTFIX=""
 FP64_MONITOR_DIR=$(pwd)/fp64_monitor_output
 if type -p flux &> /dev/null; then
-    jid=`flux getattr jobid`
-    OUTPUT_DIR_POSTFIX="_${jid}_${FLUX_JOB_ID}"
-    OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}${OUTPUT_DIR_POSTFIX}"
-    export FP64_MONITOR_DIR=${OUTPUT_DIR}
+    flux jobs &> /dev/null
+    ec=$?
+    if [ ${ec} -eq 0 ] ; then
+        jid=`flux getattr jobid`
+        OUTPUT_DIR_POSTFIX="_${jid}_${FLUX_JOB_ID}"
+        OUTPUT_DIR="${FP64_MONITOR_DIR:-fp64_monitor_output}${OUTPUT_DIR_POSTFIX}"
+        export FP64_MONITOR_DIR=${OUTPUT_DIR}
+    fi
 fi
 SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
 
