@@ -340,4 +340,4 @@ Generated: fp64_monitor_timeseries.html
 
 ## License
 
-BSD 3-Clause — see `LICENSE`.
+Apache 2.0 — see `LICENSE`.
