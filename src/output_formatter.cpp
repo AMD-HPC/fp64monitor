@@ -1,6 +1,7 @@
 #include "measure_flops/output_formatter.hpp"
 
 #include <ctime>
+#include <time.h>
 #include <iomanip>
 #include <sstream>
 
@@ -207,14 +208,14 @@ void CsvFormatter::write_footer(std::ostream& os,
 void JsonFormatter::write_header(std::ostream& os, const MonitorConfig& config) {
     // Get current time
     auto now = std::time(nullptr);
-    char time_buf[64];
-    std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
+    std::tm time_buf;
+    localtime_r(&now, &time_buf);
 
     os << "{\n";
     os << "  \"metadata\": {\n";
     os << "    \"tool\": \"FP64 GPU Monitor\",\n";
     os << "    \"version\": \"1.0.0\",\n";
-    os << "    \"start_time\": \"" << time_buf << "\",\n";
+    os << "    \"start_time\": \"" << std::put_time(&time_buf, "%Y-%m-%dT%H:%M:%S") << "\",\n";
     os << "    \"sampling_interval_ms\": " << config.sampling_interval.count() << ",\n";
     os << "    \"gpu_ids\": [";
     for (size_t i = 0; i < config.gpu_ids.size(); ++i) {
