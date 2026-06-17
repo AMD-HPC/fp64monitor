@@ -1,3 +1,11 @@
+<!--
+Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+
+See LICENSE in the project root for license information.
+-->
+
 # FP64 GPU Monitor
 
 C++ tooling (rocprofiler-sdk) to sample AMD GPU hardware counters while any HIP application runs. The default focus is FP64 instruction mix, but several counter sets (FP32, FP16, INT, SALU, high-level mix, and more) are supported for completeness/validation. VRAM/GTT-style GPU memory stats (via AMD SMI) are available only when the project is configured with **`ENABLE_AMD_SMI=ON`**; CPU `/proc` memory fields still work without it.

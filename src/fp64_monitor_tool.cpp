@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE in the project root for license information.
+ */
+
 // FP64 Monitor Tool - rocprofiler-sdk tool library
 //
 // This tool monitors FP64 instruction usage on AMD GPUs.

@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# See LICENSE in the project root for license information.
+
 cmake_minimum_required(VERSION 3.21.0 FATAL_ERROR)
 
 # Find HIP compiler if not set

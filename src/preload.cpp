@@ -1,4 +1,12 @@
 /*
+ * Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE in the project root for license information.
+ */
+
+/*
  * Preload wrapper for __libc_start_main
  * 
  * This intercepts the C runtime startup to run cleanup code after main()

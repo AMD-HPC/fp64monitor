@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# See LICENSE in the project root for license information.
+
 # Python dependencies for fp64_monitor analysis tools
 #
 # Install with: pip install -r requirements.txt

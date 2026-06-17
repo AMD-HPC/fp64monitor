@@ -1,4 +1,9 @@
 #!/bin/bash
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# See LICENSE in the project root for license information.
 #
 # validate_counters.sh - Build and validate FP64 counter collection
 #

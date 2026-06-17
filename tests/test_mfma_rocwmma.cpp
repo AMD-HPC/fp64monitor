@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE in the project root for license information.
+ */
+
 // rocWMMA MFMA test - uses rocWMMA library for FP64 matrix multiply-accumulate
 // This validates the fp64_monitor tool's GEMM analysis feature using the
 // high-level rocWMMA API instead of inline assembly.

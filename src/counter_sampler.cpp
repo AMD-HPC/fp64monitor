@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE in the project root for license information.
+ */
+
 #include "measure_flops/counter_sampler.hpp"
 #include "measure_flops/rocprofiler_compat.hpp"
 

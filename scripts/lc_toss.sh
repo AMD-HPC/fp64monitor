@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# See LICENSE in the project root for license information.
+
 rm -rf install
 for v in 7.2.1 6.4.3 ; do
     rm -rf build-${v}

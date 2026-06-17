@@ -1,4 +1,10 @@
 #!/bin/bash -e 
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# See LICENSE in the project root for license information.
+
 rm -rf $(pwd)/install
 
 versions=("6.4.3" "7.13.0-gfx90a")

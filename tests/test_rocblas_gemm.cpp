@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE in the project root for license information.
+ */
+
 // Test rocBLAS DGEMM for FP64 MFMA validation
 //
 // This test performs a moderate-sized DGEMM and reports expected FLOP counts

@@ -1,3 +1,11 @@
+<!--
+Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+
+See LICENSE in the project root for license information.
+-->
+
 # Test Programs for FP64 Counter Validation
 
 This directory contains test programs with known FP64 instruction counts for validating the measure_flops utility.
