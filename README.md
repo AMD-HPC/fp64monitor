@@ -128,7 +128,7 @@ With `BUILD_TESTS` on, from the build directory:
 ctest --test-dir . --output-on-failure --rerun-failed
 ```
 
-Other HIP targets include `stream_triad_fp32`, `test_mfma_direct`, `test_spmv`, and optionally `test_mfma_rocwmma` when rocWMMA is found. See `tests/README.md`.
+HIP targets include `stream_triad_fp64`, `stream_triad_fp32`, `test_mfma_direct`, `test_spmv`, and optionally `test_mfma_rocwmma` when rocWMMA is found. See `tests/README.md`.
 
 ## Example output
 
