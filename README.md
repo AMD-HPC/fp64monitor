@@ -125,10 +125,7 @@ python3 tests/fp64_monitor_plot_timeseries.py --html fp64_monitor_output/fp64_mo
 With `BUILD_TESTS` on, from the build directory:
 
 ```bash
-./tests/test_instruction_analyzer
-./tests/run_integration_tests.sh
-# Example monitored workload:
-FP64_MONITOR_INTERVAL=50 ROCP_TOOL_LIBRARIES="$PWD/libfp64_monitor_tool_<major>.so" ./tests/stream_triad_fp64
+ctest --test-dir . --output-on-failure --rerun-failed
 ```
 
 Other HIP targets include `stream_triad_fp32`, `test_mfma_direct`, `test_spmv`, and optionally `test_mfma_rocwmma` when rocWMMA is found. See `tests/README.md`.
